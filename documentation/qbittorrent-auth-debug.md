@@ -8,15 +8,13 @@ Debugging guide for the `"Fails." + 403` authentication failure blocking the orc
 
 **Root causes found and fixed:**
 
-1. **Empty password** — `QBT_PASSWORD` was blank in `.env`. Updated with a real password via the qBittorrent WebUI.
-2. **`loginAttempted` never resets** — fixed in `orchestrator/qbtClient.js`: the flag now resets to `false` on every failure path so the next call retries instead of silently skipping login.
-
-**Still to do (optional hardening):**
-- Add `172.21.0.0/24` to qBittorrent's IP bypass whitelist so the Docker container doesn't depend on credentials at all (Phase 4 below).
+1. **`env_file` missing from docker-compose** — `QBT_PASSWORD` was set in `.env` on the NAS but the orchestrator service had no `env_file` directive, so the variable never reached the container. `config.js` defaulted it to `''`. Fixed by adding `env_file: .env` to the orchestrator service in `docker-compose.yml`.
+2. **Repeated empty-password attempts triggered an IP ban** — `loginAttempted` was set to `true` on first failure and never reset, so the ban compounded across restarts. Fixed in [orchestrator/qbtClient.js](../orchestrator/qbtClient.js): flag now resets on every failure path.
+3. **403 on the login endpoint was swallowed** — axios threw on non-2xx responses, landing in the catch block with a misleading "proceeding without session" message instead of a clear "IP banned" error. Fixed by adding `validateStatus: () => true` to the login axios call.
 
 **Verify the fix after deploying:**
 ```bash
-docker exec orchestrator npm run test:single
+./deploy.sh --test
 ```
 Expected log lines past the pre-flight step:
 ```
@@ -125,9 +123,11 @@ Fixed catch block:
 
 ---
 
-## Phase 4 — IP Subnet Whitelist ✓ Complete
+## Phase 4 — IP Subnet Whitelist (optional)
 
-Removes credential dependency entirely. qBittorrent's IP bypass means the orchestrator never needs a valid password — the server returns `Ok.` with no SID and the existing `login()` code handles this correctly.
+This was documented as complete but was never actually configured. Since credentials now flow correctly via `env_file`, this step is optional hardening.
+
+If you want to remove credential dependency entirely (useful if the password changes or you want to skip auth altogether):
 
 **Steps (qBittorrent Web UI at http://10.1.10.254:8080):**
 
@@ -142,13 +142,9 @@ Removes credential dependency entirely. qBittorrent's IP bypass means the orches
 
 4. Save
 
-**Why both subnets?** When `npm run test:single` runs directly on the NAS (not in Docker), the connection to `10.1.10.254:8080` originates from the NAS's LAN IP (`10.1.10.x`), not the Docker bridge. Both execution contexts need to be covered.
-
-**Expected log output after whitelist is active:**
+**Expected log output if whitelist is active:**
 ```
 [INFO ] qBittorrent login response — status: 200, body: "Ok."
 [INFO ] qBittorrent login accepted but no SID returned — auth may be bypassed for this IP
 [INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
 ```
-
-**Note on credentials:** No dotenv is loaded in this project (`config.js` defaults `QBT_PASSWORD` to `''`), and the docker-compose `orchestrator` service passes no `env_file`. The IP whitelist removes any dependency on credentials.

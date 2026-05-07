@@ -75,17 +75,16 @@ ssh networkadmin@10.1.10.254 -p 8322
 
 ### Step 2 — Sync the repository to the NAS
 
-`git` is not installed on the NAS. Use `rsync` from your Mac instead — run this from a **Mac terminal** (not inside an SSH session):
+Use the deploy script from your Mac — it handles rsync and rebuild in one command:
 
 ```bash
-rsync -avz -e "ssh -p 8322" \
-  --exclude='.git' \
-  --exclude='node_modules' \
-  ~/repos/vpn-speed-tester/ \
-  sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/
+cd ~/repos/vpn-speed-tester
+./deploy.sh
 ```
 
-This copies all code, `docker-compose.yml`, and `.env` in one shot. To push updates to the NAS after any local changes, run the same command — rsync only transfers what changed.
+This rsyncs all code and config (including `.env`) to the NAS, then rebuilds and restarts the Docker stack. To push any local changes to the NAS, just run it again.
+
+> **What it does internally:** rsync with `--exclude='.git'` and `--exclude='node_modules'`, then `docker compose up -d --build` on the NAS via SSH.
 
 ---
 
@@ -130,51 +129,49 @@ cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-te
 
 ---
 
-### Step 5 — Deploy the Docker stack via SSH
+### Step 5 — Deploy the Docker stack
 
-Deploy directly from the local clone so the `.env` file is picked up automatically.
-
-> **NAS permission note:** The `sysop` user requires `sudo` for Docker commands on this NAS. Prefix every `docker` command below with `sudo`.
+Run the deploy script from your Mac. It rsyncs the code (Step 2) and rebuilds the stack in one shot:
 
 ```bash
-cd /volume1/Docker/vpn-speed-tester
-sudo docker compose up -d --build
+cd ~/repos/vpn-speed-tester
+./deploy.sh
 ```
 
-This builds the orchestrator/speedtest-runner image and starts all three containers in the background. The first build takes ~30–60 seconds — it installs Python, pip, and speedtest-cli inside the image.
+The first build takes ~30–60 seconds — it installs Python, pip, and speedtest-cli inside the image.
 
-**Verify all three containers are running:**
+**Verify all three containers are running** (SSH into the NAS, or check Portainer at `http://10.1.10.254:9000`):
 ```bash
+ssh nas
 sudo docker ps
 ```
 
-Expected output — all three showing `Up`:
-- `gluetun-test` — should show `(healthy)` after ~45 seconds (the VPN tunnel needs time to establish before health checks pass)
+Expected — all three showing `Up`:
+- `gluetun-test` — shows `(healthy)` after ~45 seconds
 - `speedtest-runner`
 - `orchestrator`
 
-You can also monitor the containers in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started.
-
 ---
 
 ---
 
-> **Session checkpoint (2026-05-07):** Steps 1–5 are complete. The stack is deployed and all three containers are confirmed healthy in Portainer. Next session starts here at Step 6.
+> **Session checkpoint (2026-05-07):** Steps 1–5 are complete. Auth issues resolved (see `documentation/qbittorrent-auth-debug.md`). Root cause was `env_file` missing from docker-compose — credentials never reached the orchestrator container. Fixed in `docker-compose.yml`. Next session starts here at Step 6.
 
 ---
 
 ### Step 6 — Run the first manual test
 
-A manual test triggers one full speed test window immediately (no waiting for the scheduler).
+Use `./deploy.sh --test` from your Mac — it syncs, rebuilds, waits 15 seconds for the containers to be ready, then triggers the test and streams the logs live:
 
 ```bash
-# From the NAS terminal (SSH in first)
-docker exec orchestrator npm run test:single
+cd ~/repos/vpn-speed-tester
+./deploy.sh --test
 ```
 
-Watch the logs in real-time in a second terminal:
+Or if the stack is already deployed and you just want to run the test without a rebuild:
 ```bash
-docker logs -f orchestrator
+ssh nas
+sudo docker exec orchestrator npm run test:single
 ```
 
 What you'll see:
@@ -191,10 +188,11 @@ The test window runs until `TEST_WINDOW_HOURS` (default: 2 hours) elapses or you
 
 ### Step 7 — Run the second manual test
 
-Same command. The queue builder picks up where it left off, prioritizing servers and tiers with the least coverage so far.
+Same as Step 6 — the queue builder picks up where it left off, prioritizing servers with the least coverage.
 
 ```bash
-docker exec orchestrator npm run test:single
+ssh nas
+sudo docker exec orchestrator npm run test:single
 ```
 
 ---
