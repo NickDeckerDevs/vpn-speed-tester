@@ -97,15 +97,19 @@ The `rsync` in Step 2 copies `.env` automatically (it lives in the repo root loc
 ssh nas ls /volume1/Docker/vpn-speed-tester/.env
 ```
 
-**Required `.env` values** — make sure all three are present before deploying:
+**Required `.env` values** — make sure all five are present before deploying:
 
 | Variable | Where to find it |
 |---|---|
 | `WIREGUARD_PRIVATE_KEY` | AirVPN config file → `[Interface] PrivateKey` |
 | `WIREGUARD_PRESHARED_KEY` | AirVPN config file → `[Peer] PresharedKey` |
 | `WIREGUARD_ADDRESSES` | AirVPN config file → `[Interface] Address` (e.g. `10.129.178.159/32`) |
+| `QBT_USERNAME` | qBittorrent WebUI username (default: `admin`) |
+| `QBT_PASSWORD` | qBittorrent WebUI password — set/reset via Tools → Options → Web UI |
 
 `WIREGUARD_ADDRESSES` is required by gluetun for AirVPN WireGuard — the container will fail to connect without it.
+
+`QBT_PASSWORD` must not be empty — the orchestrator authenticates from a Docker bridge IP (`172.21.0.x`) that is not on the qBittorrent LAN whitelist, so real credentials are required.
 
 > **Never commit `.env` to git.** It is already in `.gitignore`.
 
@@ -371,7 +375,7 @@ Errors are prefixed with a `[context]` tag that identifies where in the code the
 | `[context] ENOTFOUND — DNS failure` | VPN tunnel is not up | Check gluetun container logs |
 | `[context] ETIMEDOUT` | Network or service is overloaded | Wait a few minutes, then check again |
 | `[context] 429 Rate Limited — retry-after: Xs` | AirVPN or speedtest API rate limit hit | Reduce test frequency; wait the retry-after period |
-| `[context] Auth error (401/403)` | Credentials are wrong or expired | Verify `.env` WireGuard keys; check qBittorrent auth settings |
+| `[context] Auth error (401/403)` | qBittorrent credentials wrong or empty | Check `QBT_PASSWORD` in `.env` — see `documentation/qbittorrent-auth-debug.md` |
 | `runSpeedtest: speedtest-cli exited 127` | speedtest-cli not found in container | Rebuild the Docker image |
 | `waitForTunnel: attempt X (+Ys elapsed)...` then timeout | VPN tunnel never established | Check gluetun logs, verify WireGuard keys in `.env` |
 | `SESSION ERROR [server-name]: ...` | One server test failed | Non-fatal — other servers continue; note which server failed |

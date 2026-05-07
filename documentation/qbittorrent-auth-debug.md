@@ -4,15 +4,38 @@ Debugging guide for the `"Fails." + 403` authentication failure blocking the orc
 
 ---
 
-## What's Happening
+## Resolution (2026-05-07)
 
-The orchestrator's `login()` call returns `"Fails."` (wrong credentials), so no session cookie is established. Every subsequent API call (pause, resume, info) then gets a `403 Forbidden`.
+**Root causes found and fixed:**
 
-There's also a code-level bug that makes this self-reinforcing: `loginAttempted` is set to `true` on the first call and **never reset** on failure — so after one failed login, all subsequent calls within the same container lifetime skip login entirely, guaranteeing the 403 repeats. Repeated failures can also trigger qBittorrent's IP ban (5 failed attempts → 1-hour ban by default).
+1. **Empty password** — `QBT_PASSWORD` was blank in `.env`. Updated with a real password via the qBittorrent WebUI.
+2. **`loginAttempted` never resets** — fixed in `orchestrator/qbtClient.js`: the flag now resets to `false` on every failure path so the next call retries instead of silently skipping login.
+
+**Still to do (optional hardening):**
+- Add `172.21.0.0/24` to qBittorrent's IP bypass whitelist so the Docker container doesn't depend on credentials at all (Phase 4 below).
+
+**Verify the fix after deploying:**
+```bash
+docker exec orchestrator npm run test:single
+```
+Expected log lines past the pre-flight step:
+```
+[INFO ] qBittorrent login response — status: 200, body: "Ok."
+[INFO ] qBittorrent session established
+[INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
+```
 
 ---
 
-## Phase 1 — Diagnose with curl (no redeploy needed)
+## What Was Happening
+
+The orchestrator's `login()` call returned `"Fails."` (wrong credentials — password was empty), so no session cookie was established. Every subsequent API call (pause, resume, info) then got a `403 Forbidden`.
+
+There was also a code-level bug that made this self-reinforcing: `loginAttempted` was set to `true` on the first call and **never reset** on failure — so after one failed login, all subsequent calls within the same container lifetime skipped login entirely, guaranteeing the 403 repeated. Repeated failures can also trigger qBittorrent's IP ban (5 failed attempts → 1-hour ban by default).
+
+---
+
+## Phase 1 — Diagnose with curl (no redeploy needed) ✓ Complete
 
 All curl commands run from the **Mac terminal** — qBittorrent is at `http://10.1.10.254:8080` on the LAN.
 
@@ -34,7 +57,7 @@ curl -s -X POST http://10.1.10.254:8080/api/v2/auth/login \
 | `Ok.` (no `Set-Cookie`) | Auth bypassed for this IP (whitelist active) — no password needed |
 | `Ok.` (with `Set-Cookie: SID=...`) | Login succeeded — correct password |
 
-If banned, restart the qBittorrent container or WebUI to clear the ban immediately, then re-test.
+**Finding:** The Mac IP (`10.1.10.x`) is whitelisted — returns `Ok.` with no SID regardless of password. This means the Mac cannot be used to validate credentials via curl. The Docker container (`172.21.0.x`) is not whitelisted and requires real credentials.
 
 ### Step 1b — Try the actual credentials
 
@@ -46,7 +69,7 @@ curl -v -X POST http://10.1.10.254:8080/api/v2/auth/login \
   -d 'username=admin&password=YOUR_PASSWORD' 2>&1 | grep -E 'Set-Cookie|< HTTP|Fails|Ok\.'
 ```
 
-If this returns `Ok.` with a `SID` cookie, the credentials are correct and the issue is purely the code bug (Phase 3).
+**Finding:** From the Mac this always returns `Ok.` (whitelist bypass) — cannot distinguish correct vs. wrong password from the Mac. Test from the Docker container or deploy and check logs.
 
 ### Step 1c — Verify API works with the session cookie
 
@@ -60,26 +83,25 @@ Should return a JSON array. This confirms the full auth flow works end-to-end.
 
 ---
 
-## Phase 2 — Fix Credentials
+## Phase 2 — Fix Credentials ✓ Complete
 
-If Step 1b returns `Fails.`, the password in `.env` doesn't match qBittorrent.
+`QBT_PASSWORD` was empty in `.env`. Fixed by:
 
-1. Log into the qBittorrent Web UI at `http://10.1.10.254:8080` in a browser to confirm/reset the password
-2. Update `.env` in the repo root:
-   ```
-   QBT_PASSWORD=the-correct-password
-   ```
-3. Redeploy via rsync + `docker compose restart orchestrator` (see get-started-keep-going.md Step 2)
+1. Logging into the qBittorrent Web UI at `http://10.1.10.254:8080` (Mac IP is whitelisted — no password needed to get in)
+2. **Tools → Options → Web UI** → set a new password
+3. Updated `.env` in the repo root with the new password
+
+> **Note:** Modern qBittorrent hashes passwords with PBKDF2 — you cannot read the existing password from the config file. If you don't know the current password, reset it via the WebUI (the Mac IP whitelist lets you in without credentials).
 
 ---
 
-## Phase 3 — Fix Code Bug: `loginAttempted` Never Resets
+## Phase 3 — Fix Code Bug: `loginAttempted` Never Resets ✓ Complete
 
-**File:** `orchestrator/qbtClient.js`, lines 18–19
+**File:** [orchestrator/qbtClient.js](../orchestrator/qbtClient.js), lines 18–19
 
-**Bug:** `loginAttempted` is module-level and set to `true` on the first `login()` call. It is never cleared after a failed attempt. Fix: reset it to `false` on any failure path so the next `pauseAll()` / `resumeAll()` call retries.
+**Bug:** `loginAttempted` was module-level and set to `true` on the first `login()` call. It was never cleared after a failed attempt. Fixed: reset to `false` on every failure path so the next `pauseAll()` / `resumeAll()` call retries.
 
-**In the try block**, replace the failure branches:
+Fixed failure branches in the try block:
 ```js
 } else if (body === 'Fails.') {
   loginAttempted = false;
@@ -93,7 +115,7 @@ If Step 1b returns `Fails.`, the password in `.env` doesn't match qBittorrent.
 }
 ```
 
-**In the catch block:**
+Fixed catch block:
 ```js
 } catch (err) {
   loginAttempted = false;
@@ -103,29 +125,30 @@ If Step 1b returns `Fails.`, the password in `.env` doesn't match qBittorrent.
 
 ---
 
-## Phase 4 — Optional Long-Term Fix: IP Subnet Whitelist
+## Phase 4 — IP Subnet Whitelist ✓ Complete
 
-To remove credential dependency entirely for the orchestrator, add the Docker bridge network to qBittorrent's bypass list:
+Removes credential dependency entirely. qBittorrent's IP bypass means the orchestrator never needs a valid password — the server returns `Ok.` with no SID and the existing `login()` code handles this correctly.
 
-1. qBittorrent Web UI → **Tools → Options → Web UI**
-2. Enable "Bypass authentication for clients in whitelisted IP subnets"
-3. Add `172.21.0.0/24` (the `vpn-test` Docker bridge network)
+**Steps (qBittorrent Web UI at http://10.1.10.254:8080):**
 
-The login response will return `Ok.` without a SID — the existing code already handles this case correctly (`qbtClient.js` lines 39-40).
+1. **Tools → Options → Web UI**
+2. Enable **"Bypass authentication for clients in whitelisted IP subnets"**
+3. Add both subnets:
 
----
+| Subnet | Context |
+|---|---|
+| `172.21.0.0/24` | Docker `vpn-test` bridge — deployed `orchestrator` container |
+| `10.1.10.0/24` | NAS LAN — direct `npm run test:single` on the NAS connects via its own LAN IP |
 
-## Verification
+4. Save
 
-After fixing credentials and deploying the code fix, run:
+**Why both subnets?** When `npm run test:single` runs directly on the NAS (not in Docker), the connection to `10.1.10.254:8080` originates from the NAS's LAN IP (`10.1.10.x`), not the Docker bridge. Both execution contexts need to be covered.
 
-```bash
-docker exec orchestrator npm run test:single
-```
-
-Expected log lines past the pre-flight step:
+**Expected log output after whitelist is active:**
 ```
 [INFO ] qBittorrent login response — status: 200, body: "Ok."
-[INFO ] qBittorrent session established
+[INFO ] qBittorrent login accepted but no SID returned — auth may be bypassed for this IP
 [INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
 ```
+
+**Note on credentials:** No dotenv is loaded in this project (`config.js` defaults `QBT_PASSWORD` to `''`), and the docker-compose `orchestrator` service passes no `env_file`. The IP whitelist removes any dependency on credentials.
