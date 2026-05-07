@@ -38,7 +38,7 @@ Key-based auth avoids typing a password every time you SSH in.
 
 1. Log into the ADM web interface at `http://10.1.10.254`
 2. Go to **Settings** → **Services** → **Terminal**
-3. Enable the SSH service (default port 22)
+3. Enable the SSH service — port is **8322** (not the default 22)
 4. Save and apply
 
 #### 1b. Generate an SSH key pair on your Mac (if you don't already have one)
@@ -62,16 +62,21 @@ ssh-copy-id networkadmin@10.1.10.254
 #### 1d. Test key-based login
 
 ```bash
-ssh networkadmin@10.1.10.254
-# Should connect without prompting for a password
+# From laptop (uses ~/.ssh/config alias → sysop@10.1.10.254:8322)
+ssh nas
+
+# From desktop or any machine without the alias
+ssh networkadmin@10.1.10.254 -p 8322
 ```
+
+`sysop` and `networkadmin` are equivalent for this project.
 
 ---
 
 ### Step 2 — Clone the repository onto the NAS
 
 ```bash
-ssh networkadmin@10.1.10.254
+ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322 from desktop
 cd /volume1/Docker/
 git clone <your-github-repo-url> vpn-speed-tester
 cd vpn-speed-tester
@@ -213,7 +218,7 @@ Key config values live in `orchestrator/config.js`:
 
 1. SSH into the NAS and open the config file:
    ```bash
-   ssh networkadmin@10.1.10.254
+   ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322
    nano /volume1/Docker/vpn-speed-tester/orchestrator/config.js
    ```
 

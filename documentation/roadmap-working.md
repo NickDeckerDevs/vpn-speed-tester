@@ -30,10 +30,15 @@ All Phase 1 work is done:
 - [ ] Confirm repo is visible on GitHub before touching the NAS
 
 ### NAS — One-Time Setup
-- [ ] Enable SSH on ADM: Settings → Services → Terminal
-- [ ] Generate SSH key pair on Mac if not already present (`ssh-keygen -t ed25519`)
-- [ ] Install public key on NAS via ADM Account → SSH Keys, or `ssh-copy-id networkadmin@10.1.10.254`
-- [ ] Confirm passwordless SSH: `ssh networkadmin@10.1.10.254`
+- [x] Enable SSH on ADM: Settings → Services → Terminal (port 8322)
+- [x] Generate SSH key pair on Mac if not already present (`ssh-keygen -t ed25519`)
+- [x] Install public key on NAS via ADM → Services → Terminal → SSH Keys
+- [x] Confirm passwordless SSH
+
+**SSH quick reference:**
+- Laptop: `ssh nas` (alias in `~/.ssh/config` → sysop@10.1.10.254:8322 using `~/.ssh/id_rsa_asustor`)
+- Desktop: `ssh networkadmin@10.1.10.254 -p 8322`
+- `sysop` and `networkadmin` are equivalent for this project's purposes.
 
 ### NAS — Clone & Configure
 - [ ] Clone repo: `cd /volume1/Docker && git clone <repo-url> vpn-speed-tester`
