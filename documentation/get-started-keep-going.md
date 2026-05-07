@@ -73,32 +73,39 @@ ssh networkadmin@10.1.10.254 -p 8322
 
 ---
 
-### Step 2 — Clone the repository onto the NAS
+### Step 2 — Sync the repository to the NAS
+
+`git` is not installed on the NAS. Use `rsync` from your Mac instead — run this from a **Mac terminal** (not inside an SSH session):
 
 ```bash
-ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322 from desktop
-cd /volume1/Docker/
-git clone https://github.com/NickDeckerDevs/vpn-speed-tester.git vpn-speed-tester
-cd vpn-speed-tester
+rsync -avz -e "ssh -p 8322" \
+  --exclude='.git' \
+  --exclude='node_modules' \
+  ~/repos/vpn-speed-tester/ \
+  sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/
 ```
+
+This copies all code, `docker-compose.yml`, and `.env` in one shot. To push updates to the NAS after any local changes, run the same command — rsync only transfers what changed.
 
 ---
 
-### Step 3 — Copy `.env` from your Mac to the NAS
+### Step 3 — Verify `.env` is on the NAS
 
-The `.env` file already exists locally in the repo root. Copy it directly to the NAS — run this command **from your Mac** (not from an SSH session):
+The `rsync` in Step 2 copies `.env` automatically (it lives in the repo root locally). Confirm it arrived:
 
-```bash
-scp -P 8322 ~/repos/vpn-speed-tester/.env sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/.env
-
-# Or if the `nas` alias is configured in ~/.ssh/config:
-# scp ~/repos/vpn-speed-tester/.env nas:/volume1/Docker/vpn-speed-tester/.env
-```
-
-Verify it landed:
 ```bash
 ssh nas ls /volume1/Docker/vpn-speed-tester/.env
 ```
+
+**Required `.env` values** — make sure all three are present before deploying:
+
+| Variable | Where to find it |
+|---|---|
+| `WIREGUARD_PRIVATE_KEY` | AirVPN config file → `[Interface] PrivateKey` |
+| `WIREGUARD_PRESHARED_KEY` | AirVPN config file → `[Peer] PresharedKey` |
+| `WIREGUARD_ADDRESSES` | AirVPN config file → `[Interface] Address` (e.g. `10.129.178.159/32`) |
+
+`WIREGUARD_ADDRESSES` is required by gluetun for AirVPN WireGuard — the container will fail to connect without it.
 
 > **Never commit `.env` to git.** It is already in `.gitignore`.
 
@@ -123,24 +130,32 @@ cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-te
 
 Deploy directly from the local clone so the `.env` file is picked up automatically.
 
+> **NAS permission note:** The `sysop` user requires `sudo` for Docker commands on this NAS. Prefix every `docker` command below with `sudo`.
+
 ```bash
 cd /volume1/Docker/vpn-speed-tester
-docker compose up -d --build
+sudo docker compose up -d --build
 ```
 
-This builds the orchestrator/speedtest-runner image and starts all three containers in the background.
+This builds the orchestrator/speedtest-runner image and starts all three containers in the background. The first build takes ~30–60 seconds — it installs Python, pip, and speedtest-cli inside the image.
 
 **Verify all three containers are running:**
 ```bash
-docker ps
+sudo docker ps
 ```
 
 Expected output — all three showing `Up`:
-- `gluetun-test`
+- `gluetun-test` — should show `(healthy)` after ~45 seconds (the VPN tunnel needs time to establish before health checks pass)
 - `speedtest-runner`
 - `orchestrator`
 
 You can also monitor the containers in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started.
+
+---
+
+---
+
+> **Session checkpoint (2026-05-07):** Steps 1–5 are complete. The stack is deployed and all three containers are confirmed healthy in Portainer. Next session starts here at Step 6.
 
 ---
 
@@ -352,7 +367,7 @@ Errors are prefixed with a `[context]` tag that identifies where in the code the
 
 | What you see in the log | Likely cause | First step |
 |---|---|---|
-| `[context] ECONNREFUSED` | A service is down (qBittorrent, container) | `docker ps` — which containers are running? |
+| `[context] ECONNREFUSED` | A service is down (qBittorrent, container) | `sudo docker ps` — which containers are running? |
 | `[context] ENOTFOUND — DNS failure` | VPN tunnel is not up | Check gluetun container logs |
 | `[context] ETIMEDOUT` | Network or service is overloaded | Wait a few minutes, then check again |
 | `[context] 429 Rate Limited — retry-after: Xs` | AirVPN or speedtest API rate limit hit | Reduce test frequency; wait the retry-after period |
@@ -360,6 +375,8 @@ Errors are prefixed with a `[context]` tag that identifies where in the code the
 | `runSpeedtest: speedtest-cli exited 127` | speedtest-cli not found in container | Rebuild the Docker image |
 | `waitForTunnel: attempt X (+Ys elapsed)...` then timeout | VPN tunnel never established | Check gluetun logs, verify WireGuard keys in `.env` |
 | `SESSION ERROR [server-name]: ...` | One server test failed | Non-fatal — other servers continue; note which server failed |
+| `gluetun-test` shows `unhealthy` or exits at startup | Missing `WIREGUARD_ADDRESSES` in `.env`, or health checks firing before tunnel is up | Confirm `WIREGUARD_ADDRESSES=x.x.x.x/32` is set in `.env`; if present, wait 45–60 seconds for the tunnel to establish |
+| `permission denied while trying to connect to the Docker daemon socket` | NAS user not in docker group | Prefix command with `sudo` |
 
 #### 5. Check data integrity
 

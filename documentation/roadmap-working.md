@@ -40,26 +40,26 @@ All Phase 1 work is done:
 - Desktop: `ssh networkadmin@10.1.10.254 -p 8322`
 - `sysop` and `networkadmin` are equivalent for this project's purposes.
 
-### NAS — Clone & Configure
-- [ ] Clone repo onto NAS:
+### NAS — Sync & Configure
+> Note: `git` is not installed on the NAS. Use `rsync` from your Mac instead. Run all commands in this section from a Mac terminal (not an SSH session).
+
+- [x] Sync repo to NAS via rsync (`.env` is included automatically):
   ```bash
-  ssh nas   # or: ssh networkadmin@10.1.10.254 -p 8322
-  cd /volume1/Docker
-  git clone https://github.com/NickDeckerDevs/vpn-speed-tester.git vpn-speed-tester
+  rsync -avz -e "ssh -p 8322" \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    ~/repos/vpn-speed-tester/ \
+    sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/
   ```
-- [ ] Copy `.env` from Mac to NAS (run this from your Mac, not the NAS):
-  ```bash
-  scp -P 8322 ~/repos/vpn-speed-tester/.env sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/.env
-  # Or if the `nas` alias is set in ~/.ssh/config:
-  # scp ~/repos/vpn-speed-tester/.env nas:/volume1/Docker/vpn-speed-tester/.env
-  ```
+  To push updates later, run the same command — rsync only transfers changed files.
 - [ ] Create required data directories on the NAS (these are Volume 2 paths the containers write to — separate from the repo on Volume 1):
   ```bash
+  ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322
   mkdir -p /volume2/data/vpn-speed-tests/snapshots
   mkdir -p /volume2/data/vpn-speed-tests/report
   mkdir -p /volume2/data/vpn-speed-tests/logs
   ```
-- [ ] Copy `report/index.html` from the cloned repo to the Volume 2 report directory:
+- [ ] Copy `report/index.html` from the synced repo to the Volume 2 report directory:
   ```bash
   cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
   ```
