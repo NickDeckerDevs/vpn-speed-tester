@@ -1,5 +1,12 @@
+const logger = require('./logger');
+
 function calculateAverages(runs) {
-  if (!runs || runs.length === 0) return null;
+  logger.fn(__filename, 'calculateAverages', { runCount: runs?.length });
+
+  if (!runs || runs.length === 0) {
+    logger.warn('calculateAverages: no runs provided — returning null');
+    return null;
+  }
 
   const count = runs.length;
   const sums = runs.reduce(
@@ -23,6 +30,11 @@ function calculateAverages(runs) {
     ? parseFloat((avgDownload / available).toFixed(3))
     : null;
 
+  logger.info(
+    `calculateAverages: ↓${avgDownload} Mbps  ↑${avgUpload} Mbps  ` +
+    `ping ${avgPing}ms  efficiency ${speedEfficiencyRatio ?? 'n/a'}`
+  );
+
   return {
     download_mbps: avgDownload,
     upload_mbps:   avgUpload,
@@ -33,7 +45,11 @@ function calculateAverages(runs) {
 }
 
 function recalculateAll(results) {
+  const serverCount = Object.keys(results).length;
+  logger.fn(__filename, 'recalculateAll', { serverCount });
+
   const updated = JSON.parse(JSON.stringify(results));
+  let sessionCount = 0;
 
   for (const server of Object.values(updated)) {
     if (!server.tiers) continue;
@@ -41,11 +57,13 @@ function recalculateAll(results) {
       for (const session of sessions) {
         if (session.runs && session.runs.length > 0) {
           session.averages = calculateAverages(session.runs);
+          sessionCount++;
         }
       }
     }
   }
 
+  logger.info(`recalculateAll: recalculated ${sessionCount} sessions across ${serverCount} servers`);
   return updated;
 }
 

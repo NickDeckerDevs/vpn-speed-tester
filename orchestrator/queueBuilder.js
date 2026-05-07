@@ -1,4 +1,11 @@
+const logger = require('./logger');
+
 function buildQueue(liveServers, results) {
+  logger.fn(__filename, 'buildQueue', {
+    liveServerCount: liveServers.length,
+    resultsServerCount: Object.keys(results).length,
+  });
+
   const scored = liveServers.map(server => {
     const name = server.public_name;
     const serverData = results[name];
@@ -36,19 +43,18 @@ function buildQueue(liveServers, results) {
 
   const anyMissingCoverage = scored.some(s => !s.hasTierCoverage);
 
-  const allDownloads = scored
-    .map(s => s.avgDownload)
-    .filter(d => d != null);
+  const allDownloads = scored.map(s => s.avgDownload).filter(d => d != null);
   const globalMean = allDownloads.length > 0
     ? allDownloads.reduce((a, b) => a + b, 0) / allDownloads.length
     : 0;
+
+  logger.info(`buildQueue: anyMissingCoverage=${anyMissingCoverage}, globalMeanDownload=${globalMean.toFixed(1)} Mbps`);
 
   scored.sort((a, b) => {
     if (anyMissingCoverage) {
       if (!a.hasTierCoverage && b.hasTierCoverage) return -1;
       if (a.hasTierCoverage && !b.hasTierCoverage) return 1;
     } else {
-      // Priority 4: extreme results first (highest deviation from mean)
       const devA = a.avgDownload != null ? Math.abs(a.avgDownload - globalMean) : 0;
       const devB = b.avgDownload != null ? Math.abs(b.avgDownload - globalMean) : 0;
       if (devA !== devB) return devB - devA;
@@ -59,7 +65,12 @@ function buildQueue(liveServers, results) {
     return a.lastSessionEnd - b.lastSessionEnd;
   });
 
-  return scored.map(s => s.server);
+  const queue = scored.map(s => s.server);
+
+  const preview = queue.slice(0, 5).map(s => `${s.public_name}(${s.tier})`).join(', ');
+  logger.info(`buildQueue: queue of ${queue.length} — top 5: ${preview}`);
+
+  return queue;
 }
 
 module.exports = { buildQueue };

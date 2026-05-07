@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const logger = require('./logger');
 const config = require('./config');
 const { fetchUSServers, classifyTier } = require('./airvpnStatus');
 const { buildQueue } = require('./queueBuilder');
@@ -10,45 +11,59 @@ const { writeHourlySnapshot } = require('./snapshotWriter');
 const { pauseAll, resumeAll } = require('./qbtClient');
 
 async function runSpeedTestWindow() {
+  logger.fn(__filename, 'runSpeedTestWindow', null);
+
   const windowStart = new Date();
   const windowEnd = new Date(windowStart.getTime() + config.TEST_WINDOW_HOURS * 60 * 60 * 1000);
-
-  console.log(`[${windowStart.toISOString()}] Speed test window started. Ends at ${windowEnd.toISOString()}`);
+  logger.info(`=== Speed test window START === ends at ${windowEnd.toISOString()}`);
 
   await ensureGitRepo();
 
-  // Step 1: Pre-flight
+  // ── Step 1: Pre-flight ────────────────────────────────────────
+  logger.info('PRE-FLIGHT: pausing qBittorrent...');
   await pauseAll();
 
+  logger.info('PRE-FLIGHT: fetching live AirVPN server list...');
   const liveServers = await fetchUSServers();
-  console.log(`Found ${liveServers.length} healthy US servers`);
 
+  logger.info('PRE-FLIGHT: loading existing results...');
   let results = await loadResults();
-  const queue = buildQueue(liveServers, results);
 
-  // Step 2: Per-server test session loop
+  logger.info('PRE-FLIGHT: building test queue...');
+  const queue = buildQueue(liveServers, results);
+  logger.info(`PRE-FLIGHT: complete — ${queue.length} servers queued`);
+
+  // ── Step 2: Per-server test session loop ──────────────────────
   const serversTestedThisWindow = [];
 
   for (const server of queue) {
     if (Date.now() >= windowEnd.getTime()) {
-      console.log('Test window ended before next session — stopping');
+      logger.info('Window boundary reached — stopping before next session');
       break;
     }
 
     const serverName = server.public_name;
-    console.log(`\n--- Testing: ${serverName} (${server.tier} tier, load: ${server.currentload}%) ---`);
+    logger.info(`\n────────────────────────────────────────────`);
+    logger.info(`SESSION: ${serverName} | tier: ${server.tier} | load: ${server.currentload}% | ${server.location}`);
+    logger.info(`────────────────────────────────────────────`);
 
     try {
+      logger.info(`SESSION: switching gluetun to ${serverName}...`);
       await switchServer(serverName);
+
+      logger.info('SESSION: waiting for tunnel...');
       await waitForTunnel();
 
-      // Re-fetch status for accurate session-start snapshot
+      logger.info('SESSION: re-fetching status for session-start snapshot...');
       const freshServers = await fetchUSServers();
       const freshServer = freshServers.find(s => s.public_name === serverName) || server;
       const sessionTier = classifyTier(freshServer.currentload);
       const sessionStart = new Date().toISOString();
 
+      logger.info(`SESSION: tier confirmed as "${sessionTier}" (load: ${freshServer.currentload}%)`);
+
       if (!results[serverName]) {
+        logger.info(`SESSION: first time seeing ${serverName} — initializing result entry`);
         results[serverName] = {
           server_name: serverName,
           city: freshServer.location,
@@ -71,6 +86,7 @@ async function runSpeedTestWindow() {
       const tierSessions = results[serverName].tiers[sessionTier];
       const sessionNum = String(tierSessions.length + 1).padStart(3, '0');
       const sessionId = `${serverName}-${sessionTier}-${sessionNum}`;
+      logger.info(`SESSION: id=${sessionId}`);
 
       const session = {
         session_id: sessionId,
@@ -89,8 +105,9 @@ async function runSpeedTestWindow() {
         runs: [],
       };
 
-      // Run 3 speed tests in sequence
+      // ── 3 runs ────────────────────────────────────────────────
       for (let runNum = 1; runNum <= config.RUNS_PER_SESSION; runNum++) {
+        logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: fetching status snapshot...`);
         const runServers = await fetchUSServers();
         const runServer = runServers.find(s => s.public_name === serverName) || freshServer;
 
@@ -102,6 +119,7 @@ async function runSpeedTestWindow() {
           available_capacity_mbps: runServer.available_capacity_mbps,
           health: runServer.health,
         };
+        logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: server load now ${runServer.currentload}% — running speedtest...`);
 
         const speedResult = runSpeedtest();
 
@@ -117,7 +135,7 @@ async function runSpeedTestWindow() {
 
         session.runs.push(run);
 
-        // Write immediately after each run (atomic)
+        // Atomic write after every run
         const existingIdx = results[serverName].tiers[sessionTier]
           .findIndex(s => s.session_id === sessionId);
         if (existingIdx >= 0) {
@@ -126,19 +144,15 @@ async function runSpeedTestWindow() {
           results[serverName].tiers[sessionTier].push(session);
         }
         await writeResults(results);
-
-        console.log(
-          `  Run ${runNum}/${config.RUNS_PER_SESSION}: ` +
-          `${speedResult.download_mbps} Mbps ↓  ${speedResult.upload_mbps} Mbps ↑  ` +
-          `${speedResult.ping_ms}ms ping`
-        );
+        logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: written to results.json`);
 
         if (runNum < config.RUNS_PER_SESSION) {
+          logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: waiting ${config.MS_BETWEEN_RUNS / 1000}s before next run...`);
           await new Promise(resolve => setTimeout(resolve, config.MS_BETWEEN_RUNS));
         }
       }
 
-      // Finalize session with averages
+      // ── Finalize session ──────────────────────────────────────
       session.averages = calculateAverages(session.runs);
       session.session_end = new Date().toISOString();
 
@@ -154,20 +168,21 @@ async function runSpeedTestWindow() {
       const finalSessionNum = String(
         results[serverName].tiers[sessionTier].length
       ).padStart(3, '0');
-      await commitResults(
-        `data: ${serverName} ${sessionTier} session ${finalSessionNum} — 3 runs complete`
-      );
+      const commitMsg = `data: ${serverName} ${sessionTier} session ${finalSessionNum} — 3 runs complete`;
+      await commitResults(commitMsg);
 
       serversTestedThisWindow.push({ serverName, tier: sessionTier });
+      logger.info(`SESSION: ${serverName} complete ✓`);
 
     } catch (err) {
-      console.error(`Error testing ${serverName}:`, err.message);
+      logger.error(`SESSION ERROR [${serverName}]: ${err.message}`);
     }
   }
 
-  // Step 3: Shutdown
-  console.log('\n--- Shutdown sequence ---');
+  // ── Step 3: Shutdown ──────────────────────────────────────────
+  logger.info('\n=== SHUTDOWN sequence ===');
 
+  logger.info('SHUTDOWN: recalculating all session averages...');
   results = await loadResults();
   const aggregated = recalculateAll(results);
   await writeResults(aggregated);
@@ -175,32 +190,32 @@ async function runSpeedTestWindow() {
   const today = new Date().toISOString().slice(0, 10);
   await commitResults(`chore: recalculate aggregates ${today}`);
 
+  logger.info('SHUTDOWN: stopping gluetun-test...');
   await stopGluetun();
+
+  logger.info('SHUTDOWN: resuming qBittorrent...');
   await resumeAll();
 
   const durationMin = Math.round((Date.now() - windowStart.getTime()) / 60000);
-  console.log(
-    `\nWindow complete: ${serversTestedThisWindow.length} servers tested in ${durationMin} minutes`
-  );
+  logger.info(`=== Speed test window END === ${serversTestedThisWindow.length} servers in ${durationMin} min`);
   for (const { serverName, tier } of serversTestedThisWindow) {
-    console.log(`  ${serverName}: ${tier}`);
+    logger.info(`  ✓ ${serverName} — ${tier}`);
   }
 }
 
 function start() {
-  const schedule = `0 ${config.TEST_START_HOUR} * * *`;
+  logger.fn(__filename, 'start', null);
 
-  cron.schedule(schedule, () => {
-    runSpeedTestWindow().catch(err => console.error('Speed test window error:', err));
+  const speedSchedule = `0 ${config.TEST_START_HOUR} * * *`;
+  cron.schedule(speedSchedule, () => {
+    runSpeedTestWindow().catch(err => logger.error(`Speed test window unhandled error: ${err.message}`));
   });
+  logger.info(`start: speed test cron registered — "${speedSchedule}" (${config.TEST_START_HOUR}:00 AM daily)`);
 
   cron.schedule('0 * * * *', () => {
-    writeHourlySnapshot().catch(err => console.error('Snapshot error:', err));
+    writeHourlySnapshot().catch(err => logger.error(`Hourly snapshot error: ${err.message}`));
   });
-
-  console.log(
-    `Scheduler started. Speed tests at ${config.TEST_START_HOUR}:00 AM daily, snapshots every hour.`
-  );
+  logger.info('start: snapshot cron registered — "0 * * * *" (every hour on the hour)');
 }
 
 module.exports = { start, runSpeedTestWindow };

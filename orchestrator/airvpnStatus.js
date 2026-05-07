@@ -1,5 +1,6 @@
-const axios = require('axios');
 const haversine = require('haversine');
+const logger = require('./logger');
+const httpClient = require('./httpClient');
 const config = require('./config');
 
 const CITY_COORDS = {
@@ -26,6 +27,7 @@ const CITY_COORDS = {
 };
 
 function classifyTier(currentload) {
+  logger.fn(__filename, 'classifyTier', { currentload });
   const t = config.TIER_THRESHOLDS;
   if (currentload <= t.low.max)    return 'low';
   if (currentload <= t.medium.max) return 'medium';
@@ -38,7 +40,10 @@ function computeDistance(server) {
     ? { latitude: server.latitude, longitude: server.longitude }
     : CITY_COORDS[server.location];
 
-  if (!coords) return null;
+  if (!coords) {
+    logger.debug(`computeDistance: no coords for city "${server.location}" — skipping`);
+    return null;
+  }
 
   return Math.round(
     haversine(
@@ -50,10 +55,17 @@ function computeDistance(server) {
 }
 
 async function fetchUSServers() {
-  const response = await axios.get(config.AIRVPN_STATUS_URL, { timeout: 30000 });
-  const servers = response.data.servers || [];
+  logger.fn(__filename, 'fetchUSServers', null);
+  logger.info('Fetching server list from AirVPN status API...');
 
-  return servers
+  const data = await httpClient.get(
+    config.AIRVPN_STATUS_URL,
+    { timeout: 30000 },
+    'AirVPN status API'
+  );
+
+  const servers = data.servers || [];
+  const usServers = servers
     .filter(s => s.country_code === 'us' && s.health === 'ok')
     .map(s => ({
       ...s,
@@ -61,6 +73,9 @@ async function fetchUSServers() {
       tier: classifyTier(s.currentload),
       distance_km: computeDistance(s),
     }));
+
+  logger.info(`fetchUSServers: ${usServers.length} healthy US servers (${servers.length} total in response)`);
+  return usServers;
 }
 
 module.exports = { fetchUSServers, classifyTier };

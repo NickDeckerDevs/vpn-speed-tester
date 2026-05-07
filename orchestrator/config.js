@@ -6,6 +6,7 @@ module.exports = {
   SNAPSHOTS_PATH:       '/data/snapshots/',
   GIT_REPO_PATH:        '/data/',
   GLUETUN_CONTAINER:    'gluetun-test',
+  LOGS_PATH:            '/data/logs/',
 
   CAPE_CORAL_LAT:       26.5629,
   CAPE_CORAL_LON:       -81.9495,
