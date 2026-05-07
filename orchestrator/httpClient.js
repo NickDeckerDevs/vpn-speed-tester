@@ -10,7 +10,7 @@ function handleError(err, context) {
     const retryAfter = err.response.headers?.['retry-after'];
     logger.warn(`[${context}] 429 Rate Limited${retryAfter ? ` — retry-after: ${retryAfter}s` : ''}`);
   } else if (status === 401 || status === 403) {
-    logger.error(`[${context}] Auth error (${status}) — check credentials`);
+    logger.error(`[${context}] Auth error (${status}) — response body: ${error}`);
   } else if (status >= 500) {
     logger.error(`[${context}] Server error ${status}: ${error}`);
   } else if (status >= 400) {
