@@ -12,9 +12,12 @@ services:
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
       - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
       - SERVER_COUNTRIES=United States
       - SERVER_NAMES=Aladfar
-      - FIREWALL_OUTBOUND_SUBNETS=10.1.10.0/24
+      - DNS_SERVERS=1.1.1.1,8.8.8.8
+      - EXTRA_ROUTES=10.1.10.0/24
+      - FIREWALL_LOCAL_NETWORK_ACCESS=true
       - TZ=America/New_York
     volumes:
       - /volume1/Docker/vpn-speed-tester/gluetun-test:/gluetun
@@ -22,9 +25,10 @@ services:
       - vpn-test
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ping", "-c", "1", "1.1.1.1"]
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
       interval: 30s
       timeout: 5s
+      start_period: 45s
       retries: 3
 
   speedtest-runner:
