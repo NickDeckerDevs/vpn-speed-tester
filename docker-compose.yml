@@ -1,0 +1,63 @@
+services:
+
+  gluetun-test:
+    image: qmcgaw/gluetun:v3.41.1
+    container_name: gluetun-test
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - SERVER_COUNTRIES=United States
+      - SERVER_NAMES=Aladfar
+      - FIREWALL_OUTBOUND_SUBNETS=10.1.10.0/24
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/gluetun-test:/gluetun
+    networks:
+      - vpn-test
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ping", "-c", "1", "1.1.1.1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  speedtest-runner:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: speedtest-runner
+    network_mode: "service:gluetun-test"
+    depends_on:
+      gluetun-test:
+        condition: service_healthy
+    volumes:
+      - /volume2/data/vpn-speed-tests:/data
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/orchestrator:/config
+      - /volume2/data/vpn-speed-tests:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=America/New_York
+    networks:
+      - vpn-test
+    restart: unless-stopped
+
+networks:
+  vpn-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24

@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AirVPN Speed Test Report</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    header {
+      background: #1a1d2e;
+      border-bottom: 1px solid #2d3748;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+
+    .tabs { display: flex; gap: 4px; }
+
+    .tab-btn {
+      padding: 6px 16px;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .tab-btn.active {
+      background: #3b82f6;
+      border-color: #3b82f6;
+      color: #fff;
+    }
+
+    #status-bar {
+      font-size: 12px;
+      color: #64748b;
+      margin-left: auto;
+    }
+
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    section { margin-bottom: 40px; }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .chart-wrap {
+      background: #1a1d2e;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .chart-wrap canvas { max-height: 340px; }
+
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+
+    /* Tier legend */
+    .tier-legend {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .tier-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .tier-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      padding: 8px 12px;
+      border-bottom: 1px solid #2d3748;
+    }
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #1e293b;
+      font-size: 13px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e293b; }
+
+    .table-wrap {
+      background: #1a1d2e;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      overflow: hidden;
+      overflow-x: auto;
+    }
+
+    .tier-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tier-low    { background: rgba(34,197,94,0.15);  color: #4ade80; }
+    .tier-medium { background: rgba(234,179,8,0.15);  color: #facc15; }
+    .tier-high   { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .tier-diablo { background: rgba(239,68,68,0.15);  color: #f87171; }
+
+    /* Drill-down */
+    details { border-bottom: 1px solid #1e293b; }
+    details:last-child { border-bottom: none; }
+    summary {
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+      font-size: 13px;
+    }
+    summary:hover { background: #1e293b; }
+    summary::marker { color: #4b5563; }
+
+    .session-detail {
+      padding: 8px 12px 12px 24px;
+      background: #131621;
+    }
+
+    .run-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 1fr 1fr 1fr 1fr;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #1e293b;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .run-row:last-child { border-bottom: none; }
+    .run-row span:first-child { color: #64748b; }
+
+    /* Heatmap */
+    .heatmap-wrap {
+      background: #1a1d2e;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 20px;
+      overflow-x: auto;
+    }
+
+    .heatmap-grid {
+      display: grid;
+      gap: 1px;
+    }
+
+    .hm-cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 2px;
+      title: '';
+    }
+
+    .hm-label {
+      font-size: 10px;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      padding-right: 8px;
+      white-space: nowrap;
+    }
+
+    .hm-hour {
+      font-size: 10px;
+      color: #64748b;
+      text-align: center;
+      width: 22px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px;
+      color: #4b5563;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>AirVPN Speed Test Report</h1>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('speed')">Speed Tests</button>
+    <button class="tab-btn" onclick="showTab('snapshots')">Hourly Snapshots</button>
+  </div>
+  <span id="status-bar">Loading…</span>
+</header>
+
+<main>
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 1: Speed Test Results -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="tab-speed" class="tab-panel active">
+
+    <div class="tier-legend">
+      <span class="tier-badge"><span class="tier-dot" style="background:#4ade80"></span>Low (0–30%)</span>
+      <span class="tier-badge"><span class="tier-dot" style="background:#facc15"></span>Medium (31–50%)</span>
+      <span class="tier-badge"><span class="tier-dot" style="background:#fb923c"></span>High (51–70%)</span>
+      <span class="tier-badge"><span class="tier-dot" style="background:#f87171"></span>Diablo (71–100%)</span>
+    </div>
+
+    <section>
+      <h2>Average Download Speed by Server</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-download-bar"></canvas>
+      </div>
+    </section>
+
+    <section>
+      <div class="chart-row">
+        <div>
+          <h2>Download Speed vs. Server Load</h2>
+          <div class="chart-wrap">
+            <canvas id="chart-scatter-load"></canvas>
+          </div>
+        </div>
+        <div>
+          <h2>Download Speed vs. Distance from Cape Coral</h2>
+          <div class="chart-wrap">
+            <canvas id="chart-scatter-distance"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Speed Efficiency Ratio by Server</h2>
+      <p style="font-size:12px;color:#64748b;margin-bottom:12px;">Download achieved ÷ available server headroom — higher is better relative to available capacity.</p>
+      <div class="chart-wrap">
+        <canvas id="chart-efficiency"></canvas>
+      </div>
+    </section>
+
+    <section>
+      <h2>City Averages</h2>
+      <div class="table-wrap">
+        <table id="table-cities">
+          <thead>
+            <tr>
+              <th>City</th>
+              <th>Servers</th>
+              <th>Avg Download (Mbps)</th>
+              <th>Avg Upload (Mbps)</th>
+              <th>Avg Ping (ms)</th>
+              <th>Avg Jitter (ms)</th>
+              <th>Sessions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Server Drill-Down</h2>
+      <div class="table-wrap" id="drilldown-container">
+        <div class="empty-state">No data yet.</div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 2: Hourly Snapshots -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="tab-snapshots" class="tab-panel">
+
+    <section>
+      <h2>Server Load Heatmap (Hour of Day)</h2>
+      <p style="font-size:12px;color:#64748b;margin-bottom:12px;">Average load per server per UTC hour across all captured snapshots. Darker = heavier load.</p>
+      <div class="heatmap-wrap" id="heatmap-container">
+        <div class="empty-state">No snapshot data yet.</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Average US Server Load Over Time</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-load-timeline"></canvas>
+      </div>
+    </section>
+
+    <section>
+      <h2>Average Load by City Over Time</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-city-load"></canvas>
+      </div>
+    </section>
+
+    <section>
+      <h2>Best Time to Connect (Lowest Historical Load)</h2>
+      <div class="table-wrap">
+        <table id="table-best-time">
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>City</th>
+              <th>Best Hour (UTC)</th>
+              <th>Avg Load at Best Hour</th>
+              <th>Tier</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────
+const TIER_COLORS = {
+  low:    '#4ade80',
+  medium: '#facc15',
+  high:   '#fb923c',
+  diablo: '#f87171',
+};
+const TIER_BG = {
+  low:    'rgba(74,222,128,0.75)',
+  medium: 'rgba(250,204,21,0.75)',
+  high:   'rgba(251,146,60,0.75)',
+  diablo: 'rgba(248,113,113,0.75)',
+};
+const TIERS = ['low', 'medium', 'high', 'diablo'];
+
+const CHART_DEFAULTS = {
+  color: '#94a3b8',
+  borderColor: '#2d3748',
+  plugins: {
+    legend: { labels: { color: '#94a3b8', boxWidth: 12 } },
+    tooltip: { backgroundColor: '#1e293b', titleColor: '#e2e8f0', bodyColor: '#94a3b8' },
+  },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+  },
+};
+
+// ── State ──────────────────────────────────────────────────────
+let results = {};
+let snapshots = [];
+const charts = {};
+
+// ── Tab switching ──────────────────────────────────────────────
+function showTab(id) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${id}`).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ── Data loading ───────────────────────────────────────────────
+async function loadData() {
+  // Results
+  try {
+    const r = await fetch('../results.json');
+    if (r.ok) results = await r.json();
+  } catch { /* no data yet */ }
+
+  // Snapshot index then individual files
+  try {
+    const idx = await fetch('../snapshots/index.json');
+    if (idx.ok) {
+      const files = await idx.json();
+      const recent = files.slice(-168); // last 7 days
+      const fetched = await Promise.allSettled(
+        recent.map(f => fetch(`../snapshots/${f}`).then(r => r.ok ? r.json() : null))
+      );
+      snapshots = fetched
+        .filter(r => r.status === 'fulfilled' && r.value)
+        .map(r => r.value)
+        .sort((a, b) => a.snapshot_time.localeCompare(b.snapshot_time));
+    }
+  } catch { /* no snapshots yet */ }
+}
+
+// ── Data helpers ───────────────────────────────────────────────
+function allSessions(serverData) {
+  if (!serverData?.tiers) return [];
+  return TIERS.flatMap(t => serverData.tiers[t] || []);
+}
+
+function serverOverallAvg(serverData) {
+  const sessions = allSessions(serverData).filter(s => s.averages);
+  if (!sessions.length) return null;
+  const dl = sessions.reduce((s, x) => s + x.averages.download_mbps, 0) / sessions.length;
+  const ul = sessions.reduce((s, x) => s + x.averages.upload_mbps, 0) / sessions.length;
+  const pg = sessions.reduce((s, x) => s + x.averages.ping_ms, 0) / sessions.length;
+  const jt = sessions.reduce((s, x) => s + x.averages.jitter_ms, 0) / sessions.length;
+  const er = sessions.filter(s => s.averages.speed_efficiency_ratio != null);
+  const ratio = er.length
+    ? er.reduce((s, x) => s + x.averages.speed_efficiency_ratio, 0) / er.length
+    : null;
+  return { dl, ul, pg, jt, ratio };
+}
+
+function dominantTier(serverData) {
+  if (!serverData?.tiers) return 'low';
+  let max = 0, best = 'low';
+  for (const t of TIERS) {
+    const n = (serverData.tiers[t] || []).length;
+    if (n > max) { max = n; best = t; }
+  }
+  return best;
+}
+
+function fmt1(v) { return v != null ? v.toFixed(1) : '—'; }
+function fmt2(v) { return v != null ? v.toFixed(2) : '—'; }
+function fmt3(v) { return v != null ? v.toFixed(3) : '—'; }
+
+function tierPill(tier) {
+  return `<span class="tier-pill tier-${tier}">${tier}</span>`;
+}
+
+// ── Destroy chart helper ───────────────────────────────────────
+function makeChart(id, config) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, config);
+  return charts[id];
+}
+
+// ── Tab 1: Download bar chart ──────────────────────────────────
+function renderDownloadBar() {
+  const servers = Object.values(results)
+    .map(s => ({ name: s.server_name, avg: serverOverallAvg(s), tier: dominantTier(s) }))
+    .filter(s => s.avg)
+    .sort((a, b) => b.avg.dl - a.avg.dl);
+
+  if (!servers.length) return;
+
+  makeChart('chart-download-bar', {
+    type: 'bar',
+    data: {
+      labels: servers.map(s => s.name),
+      datasets: [{
+        label: 'Avg Download (Mbps)',
+        data: servers.map(s => s.avg.dl.toFixed(1)),
+        backgroundColor: servers.map(s => TIER_BG[s.tier]),
+        borderColor: servers.map(s => TIER_COLORS[s.tier]),
+        borderWidth: 1,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } },
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, ticks: { color: '#64748b', maxRotation: 60, font: { size: 9 } } },
+        y: { ...CHART_DEFAULTS.scales.y, title: { display: true, text: 'Mbps', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 1: Scatter — download vs load ─────────────────────────
+function renderScatterLoad() {
+  const byTier = { low: [], medium: [], high: [], diablo: [] };
+
+  for (const server of Object.values(results)) {
+    if (!server.tiers) continue;
+    for (const tier of TIERS) {
+      for (const session of server.tiers[tier] || []) {
+        if (!session.averages) continue;
+        byTier[tier].push({
+          x: session.status_at_session_start?.currentload ?? 0,
+          y: session.averages.download_mbps,
+          label: server.server_name,
+        });
+      }
+    }
+  }
+
+  makeChart('chart-scatter-load', {
+    type: 'scatter',
+    data: {
+      datasets: TIERS.map(t => ({
+        label: t.charAt(0).toUpperCase() + t.slice(1),
+        data: byTier[t],
+        backgroundColor: TIER_BG[t],
+        pointRadius: 5,
+      })),
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: { ...CHART_DEFAULTS.plugins,
+        tooltip: { ...CHART_DEFAULTS.plugins.tooltip,
+          callbacks: { label: ctx => `${ctx.raw.label}: ${ctx.raw.y} Mbps @ ${ctx.raw.x}% load` },
+        },
+      },
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, title: { display: true, text: 'Server Load %', color: '#64748b' } },
+        y: { ...CHART_DEFAULTS.scales.y, title: { display: true, text: 'Download Mbps', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 1: Scatter — download vs distance ──────────────────────
+function renderScatterDistance() {
+  const points = Object.values(results)
+    .map(s => {
+      const avg = serverOverallAvg(s);
+      if (!avg || s.distance_from_cape_coral_km == null) return null;
+      return { x: s.distance_from_cape_coral_km, y: avg.dl, label: s.server_name, tier: dominantTier(s) };
+    })
+    .filter(Boolean);
+
+  const byTier = {};
+  for (const t of TIERS) byTier[t] = points.filter(p => p.tier === t);
+
+  makeChart('chart-scatter-distance', {
+    type: 'scatter',
+    data: {
+      datasets: TIERS.map(t => ({
+        label: t.charAt(0).toUpperCase() + t.slice(1),
+        data: byTier[t],
+        backgroundColor: TIER_BG[t],
+        pointRadius: 5,
+      })),
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: { ...CHART_DEFAULTS.plugins,
+        tooltip: { ...CHART_DEFAULTS.plugins.tooltip,
+          callbacks: { label: ctx => `${ctx.raw.label}: ${ctx.raw.y} Mbps, ${ctx.raw.x} km` },
+        },
+      },
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, title: { display: true, text: 'Distance from Cape Coral (km)', color: '#64748b' } },
+        y: { ...CHART_DEFAULTS.scales.y, title: { display: true, text: 'Download Mbps', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 1: Efficiency bar ──────────────────────────────────────
+function renderEfficiency() {
+  const servers = Object.values(results)
+    .map(s => ({ name: s.server_name, avg: serverOverallAvg(s), tier: dominantTier(s) }))
+    .filter(s => s.avg?.ratio != null)
+    .sort((a, b) => b.avg.ratio - a.avg.ratio);
+
+  if (!servers.length) return;
+
+  makeChart('chart-efficiency', {
+    type: 'bar',
+    data: {
+      labels: servers.map(s => s.name),
+      datasets: [{
+        label: 'Speed Efficiency Ratio',
+        data: servers.map(s => s.avg.ratio.toFixed(3)),
+        backgroundColor: servers.map(s => TIER_BG[s.tier]),
+        borderColor: servers.map(s => TIER_COLORS[s.tier]),
+        borderWidth: 1,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } },
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, ticks: { color: '#64748b', maxRotation: 60, font: { size: 9 } } },
+        y: { ...CHART_DEFAULTS.scales.y, title: { display: true, text: 'Ratio', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 1: City table ──────────────────────────────────────────
+function renderCityTable() {
+  const cityMap = {};
+
+  for (const server of Object.values(results)) {
+    const city = server.city || 'Unknown';
+    if (!cityMap[city]) cityMap[city] = { servers: new Set(), sessions: [], dl: [], ul: [], pg: [], jt: [] };
+    cityMap[city].servers.add(server.server_name);
+
+    for (const session of allSessions(server)) {
+      if (!session.averages) continue;
+      cityMap[city].sessions.push(session);
+      cityMap[city].dl.push(session.averages.download_mbps);
+      cityMap[city].ul.push(session.averages.upload_mbps);
+      cityMap[city].pg.push(session.averages.ping_ms);
+      cityMap[city].jt.push(session.averages.jitter_ms);
+    }
+  }
+
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const tbody = document.querySelector('#table-cities tbody');
+  tbody.innerHTML = '';
+
+  Object.entries(cityMap)
+    .sort((a, b) => (avg(b[1].dl) || 0) - (avg(a[1].dl) || 0))
+    .forEach(([city, d]) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${city}</td>
+        <td>${d.servers.size}</td>
+        <td>${fmt1(avg(d.dl))}</td>
+        <td>${fmt1(avg(d.ul))}</td>
+        <td>${fmt1(avg(d.pg))}</td>
+        <td>${fmt1(avg(d.jt))}</td>
+        <td>${d.sessions.length}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+}
+
+// ── Tab 1: Drill-down ──────────────────────────────────────────
+function renderDrilldown() {
+  const container = document.getElementById('drilldown-container');
+  const servers = Object.values(results)
+    .sort((a, b) => (a.server_name || '').localeCompare(b.server_name || ''));
+
+  if (!servers.length) { container.innerHTML = '<div class="empty-state">No data yet.</div>'; return; }
+
+  container.innerHTML = '';
+
+  for (const server of servers) {
+    const overallAvg = serverOverallAvg(server);
+    const sessions = allSessions(server);
+    const outer = document.createElement('details');
+
+    const dlStr = overallAvg ? `${fmt1(overallAvg.dl)} Mbps ↓` : 'no sessions';
+    outer.innerHTML = `
+      <summary>
+        <span style="flex:1;font-weight:500">${server.server_name}</span>
+        <span style="color:#64748b;font-size:12px;margin-right:12px">${server.city || ''}</span>
+        <span style="color:#94a3b8;font-size:12px;margin-right:12px">${dlStr}</span>
+        <span style="color:#4b5563;font-size:12px">${sessions.length} session${sessions.length !== 1 ? 's' : ''}</span>
+      </summary>
+    `;
+
+    const serverDetail = document.createElement('div');
+    serverDetail.className = 'session-detail';
+
+    for (const tier of TIERS) {
+      const tierSessions = server.tiers?.[tier] || [];
+      if (!tierSessions.length) continue;
+
+      for (const session of tierSessions) {
+        const avg = session.averages;
+        const sessionEl = document.createElement('details');
+        sessionEl.style.marginBottom = '4px';
+
+        sessionEl.innerHTML = `
+          <summary style="font-size:12px;padding:6px 8px">
+            ${tierPill(tier)}
+            <span style="margin-left:8px;color:#94a3b8">${session.session_id}</span>
+            <span style="margin-left:auto;color:#64748b">${session.session_start?.slice(0,16).replace('T',' ')} UTC</span>
+            ${avg ? `<span style="margin-left:12px;font-weight:500">${fmt1(avg.download_mbps)} Mbps ↓</span>` : ''}
+          </summary>
+          <div style="padding:8px 12px;background:#0f1117;font-size:12px">
+            ${avg ? `
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;color:#94a3b8">
+                <span>↓ ${fmt1(avg.download_mbps)} Mbps</span>
+                <span>↑ ${fmt1(avg.upload_mbps)} Mbps</span>
+                <span>${fmt1(avg.ping_ms)} ms ping</span>
+                <span>${fmt2(avg.jitter_ms)} ms jitter</span>
+              </div>
+            ` : ''}
+            <div class="run-row" style="color:#4b5563;font-size:11px">
+              <span>#</span><span>Download</span><span>Upload</span><span>Ping</span><span>Jitter</span><span>Load</span>
+            </div>
+            ${(session.runs || []).map(r => `
+              <div class="run-row">
+                <span>${r.run}</span>
+                <span>${fmt1(r.download_mbps)} Mbps</span>
+                <span>${fmt1(r.upload_mbps)} Mbps</span>
+                <span>${fmt1(r.ping_ms)} ms</span>
+                <span>${fmt2(r.jitter_ms)} ms</span>
+                <span>${r.status_snapshot?.currentload ?? '?'}%</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+
+        serverDetail.appendChild(sessionEl);
+      }
+    }
+
+    outer.appendChild(serverDetail);
+    container.appendChild(outer);
+  }
+}
+
+// ── Tab 2: Heatmap ─────────────────────────────────────────────
+function renderHeatmap() {
+  const container = document.getElementById('heatmap-container');
+  if (!snapshots.length) { container.innerHTML = '<div class="empty-state">No snapshot data yet.</div>'; return; }
+
+  // Aggregate: { serverName: { hour: [loads] } }
+  const agg = {};
+  for (const snap of snapshots) {
+    const hour = new Date(snap.snapshot_time).getUTCHours();
+    for (const s of snap.us_servers) {
+      if (!agg[s.server_name]) agg[s.server_name] = {};
+      if (!agg[s.server_name][hour]) agg[s.server_name][hour] = [];
+      agg[s.server_name][hour].push(s.currentload);
+    }
+  }
+
+  const serverNames = Object.keys(agg).sort();
+  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+  // Build grid: [label, cell×24] per row
+  let html = '<div style="display:table;border-spacing:1px">';
+
+  // Header row
+  html += '<div style="display:table-row">';
+  html += '<div class="hm-label" style="display:table-cell;min-width:120px"></div>';
+  for (const h of HOURS) {
+    html += `<div class="hm-hour" style="display:table-cell">${String(h).padStart(2,'0')}</div>`;
+  }
+  html += '</div>';
+
+  for (const name of serverNames) {
+    html += '<div style="display:table-row">';
+    html += `<div class="hm-label" style="display:table-cell;min-width:120px">${name}</div>`;
+    for (const h of HOURS) {
+      const loads = agg[name][h] || [];
+      const avg = loads.length ? loads.reduce((a, b) => a + b, 0) / loads.length : null;
+      let bg = '#1a1d2e';
+      let title = `${name} ${String(h).padStart(2,'0')}:00 UTC — no data`;
+      if (avg != null) {
+        const alpha = Math.min(1, avg / 100);
+        if (avg <= 30)      bg = `rgba(74,222,128,${0.2 + alpha * 0.8})`;
+        else if (avg <= 50) bg = `rgba(250,204,21,${0.2 + alpha * 0.8})`;
+        else if (avg <= 70) bg = `rgba(251,146,60,${0.2 + alpha * 0.8})`;
+        else                bg = `rgba(248,113,113,${0.2 + alpha * 0.8})`;
+        title = `${name} ${String(h).padStart(2,'0')}:00 UTC — avg ${avg.toFixed(0)}% load (${loads.length} samples)`;
+      }
+      html += `<div class="hm-cell" style="display:table-cell;background:${bg}" title="${title}"></div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// ── Tab 2: Load timeline ───────────────────────────────────────
+function renderLoadTimeline() {
+  if (!snapshots.length) return;
+
+  const labels = snapshots.map(s => s.snapshot_time.slice(0, 16).replace('T', ' '));
+  const data = snapshots.map(s => {
+    const loads = s.us_servers.map(x => x.currentload);
+    return loads.length ? (loads.reduce((a, b) => a + b, 0) / loads.length).toFixed(1) : null;
+  });
+
+  makeChart('chart-load-timeline', {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg US Server Load (%)',
+        data,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.1)',
+        tension: 0.3,
+        pointRadius: 2,
+        fill: true,
+      }],
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, ticks: { color: '#64748b', maxTicksLimit: 12, maxRotation: 45, font: { size: 9 } } },
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100, title: { display: true, text: 'Load %', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 2: City load comparison ────────────────────────────────
+function renderCityLoad() {
+  if (!snapshots.length) return;
+
+  // Collect unique cities
+  const citySet = new Set();
+  for (const snap of snapshots) snap.us_servers.forEach(s => citySet.add(s.city));
+  const cities = [...citySet].sort();
+
+  const palette = ['#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#10b981','#ef4444','#6366f1'];
+  const labels = snapshots.map(s => s.snapshot_time.slice(0, 16).replace('T', ' '));
+
+  const datasets = cities.slice(0, 8).map((city, i) => ({
+    label: city,
+    data: snapshots.map(snap => {
+      const cityServers = snap.us_servers.filter(s => s.city === city);
+      if (!cityServers.length) return null;
+      return (cityServers.reduce((a, b) => a + b.currentload, 0) / cityServers.length).toFixed(1);
+    }),
+    borderColor: palette[i % palette.length],
+    backgroundColor: 'transparent',
+    tension: 0.3,
+    pointRadius: 1,
+  }));
+
+  makeChart('chart-city-load', {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      ...CHART_DEFAULTS,
+      scales: {
+        x: { ...CHART_DEFAULTS.scales.x, ticks: { color: '#64748b', maxTicksLimit: 12, maxRotation: 45, font: { size: 9 } } },
+        y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100, title: { display: true, text: 'Load %', color: '#64748b' } },
+      },
+    },
+  });
+}
+
+// ── Tab 2: Best time table ─────────────────────────────────────
+function renderBestTimeTable() {
+  const agg = {};
+  for (const snap of snapshots) {
+    const hour = new Date(snap.snapshot_time).getUTCHours();
+    for (const s of snap.us_servers) {
+      if (!agg[s.server_name]) agg[s.server_name] = { city: s.city, hours: {} };
+      if (!agg[s.server_name].hours[hour]) agg[s.server_name].hours[hour] = [];
+      agg[s.server_name].hours[hour].push(s.currentload);
+    }
+  }
+
+  const tbody = document.querySelector('#table-best-time tbody');
+  tbody.innerHTML = '';
+
+  const rows = Object.entries(agg)
+    .map(([name, d]) => {
+      let bestHour = null, bestLoad = Infinity;
+      for (const [h, loads] of Object.entries(d.hours)) {
+        const avg = loads.reduce((a, b) => a + b, 0) / loads.length;
+        if (avg < bestLoad) { bestLoad = avg; bestHour = parseInt(h); }
+      }
+      let tier = 'low';
+      if (bestLoad > 70) tier = 'diablo';
+      else if (bestLoad > 50) tier = 'high';
+      else if (bestLoad > 30) tier = 'medium';
+      return { name, city: d.city, bestHour, bestLoad, tier };
+    })
+    .sort((a, b) => a.bestLoad - b.bestLoad);
+
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.name}</td>
+      <td>${row.city || '—'}</td>
+      <td>${String(row.bestHour).padStart(2, '0')}:00 UTC</td>
+      <td>${fmt1(row.bestLoad)}%</td>
+      <td>${tierPill(row.tier)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+// ── Status bar ─────────────────────────────────────────────────
+function updateStatus() {
+  const serverCount = Object.keys(results).length;
+  const sessionCount = Object.values(results).reduce((n, s) => n + allSessions(s).length, 0);
+  const snapshotCount = snapshots.length;
+  document.getElementById('status-bar').textContent =
+    `${serverCount} servers · ${sessionCount} sessions · ${snapshotCount} snapshots · loaded ${new Date().toLocaleTimeString()}`;
+}
+
+// ── Bootstrap ──────────────────────────────────────────────────
+async function init() {
+  await loadData();
+  updateStatus();
+
+  // Tab 1
+  renderDownloadBar();
+  renderScatterLoad();
+  renderScatterDistance();
+  renderEfficiency();
+  renderCityTable();
+  renderDrilldown();
+
+  // Tab 2
+  renderHeatmap();
+  renderLoadTimeline();
+  renderCityLoad();
+  renderBestTimeTable();
+}
+
+init().catch(console.error);
+</script>
+
+</body>
+</html>

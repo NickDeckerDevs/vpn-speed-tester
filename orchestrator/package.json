@@ -1,0 +1,18 @@
+{
+  "name": "vpn-speed-tester-orchestrator",
+  "version": "1.0.0",
+  "description": "AirVPN US server speed test orchestrator",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "test:single": "node main.js --manual"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dockerode": "^4.0.0",
+    "fs-extra": "^11.2.0",
+    "haversine": "^1.1.1",
+    "node-cron": "^3.0.3",
+    "simple-git": "^3.24.0"
+  }
+}
