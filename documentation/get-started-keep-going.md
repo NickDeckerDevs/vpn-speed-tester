@@ -22,8 +22,8 @@ Before touching the NAS, the repo needs to be on GitHub so it can be cloned remo
 
 ```bash
 # From the project root on your Mac
-git remote add origin <your-github-repo-url>   # skip if already linked
-git push -u origin main
+git remote add origin https://github.com/NickDeckerDevs/vpn-speed-tester.git   # skip if already linked
+git push -u origin master
 ```
 
 Confirm the repo is visible on GitHub before continuing.
@@ -78,63 +78,73 @@ ssh networkadmin@10.1.10.254 -p 8322
 ```bash
 ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322 from desktop
 cd /volume1/Docker/
-git clone <your-github-repo-url> vpn-speed-tester
+git clone https://github.com/NickDeckerDevs/vpn-speed-tester.git vpn-speed-tester
 cd vpn-speed-tester
 ```
 
 ---
 
-### Step 3 — Configure WireGuard credentials
+### Step 3 — Copy `.env` from your Mac to the NAS
 
-The stack needs two WireGuard keys from your AirVPN account.
+The `.env` file already exists locally in the repo root. Copy it directly to the NAS — run this command **from your Mac** (not from an SSH session):
 
-**Get the keys from AirVPN:**
-1. Log into `airvpn.org` → **Client Area** → **Config Generator**
-2. Select WireGuard, choose a US server, and download the config file
-3. Open the `.conf` file — you need `PrivateKey` and `PresharedKey`
-
-**Set up the `.env` file on the NAS:**
 ```bash
-# From inside /volume1/Docker/vpn-speed-tester
-cp .env.example .env
-nano .env
+scp -P 8322 ~/repos/vpn-speed-tester/.env sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/.env
+
+# Or if the `nas` alias is configured in ~/.ssh/config:
+# scp ~/repos/vpn-speed-tester/.env nas:/volume1/Docker/vpn-speed-tester/.env
 ```
 
-Fill in the two values:
-```
-WIREGUARD_PRIVATE_KEY=<your-private-key>
-WIREGUARD_PRESHARED_KEY=<your-preshared-key>
+Verify it landed:
+```bash
+ssh nas ls /volume1/Docker/vpn-speed-tester/.env
 ```
 
 > **Never commit `.env` to git.** It is already in `.gitignore`.
 
 ---
 
-### Step 4 — Deploy the Docker stack via Portainer
+### Step 4 — Create Volume 2 data directories and copy the report
 
-Portainer is the confirmed deployment method for this NAS. The docker-compose CLI may also work, but has not been verified.
+The containers write all data to `/volume2/data/vpn-speed-tests/`. These directories don't exist yet on Volume 2 (separate from the cloned repo on Volume 1).
 
-1. Open Portainer in your browser: `http://10.1.10.254:9000`
-2. Go to **Stacks** → **Add stack**
-3. Name the stack: `vpn-speed-tester`
-4. Under **Build method**, select **Repository**
-5. Enter:
-   - Repository URL: your GitHub repo URL
-   - Branch: `main`
-   - Compose file path: `docker-compose.yml`
-6. Scroll down to **Environment variables** and add both keys:
-   - `WIREGUARD_PRIVATE_KEY` = your private key
-   - `WIREGUARD_PRESHARED_KEY` = your preshared key
-7. Click **Deploy the stack**
+SSH into the NAS and run:
+```bash
+mkdir -p /volume2/data/vpn-speed-tests/snapshots
+mkdir -p /volume2/data/vpn-speed-tests/report
+mkdir -p /volume2/data/vpn-speed-tests/logs
 
-**Verify all three containers are running** in the Portainer container list:
-- `gluetun-test` — Up
-- `orchestrator` — Up
-- `speedtest-runner` — Up
+cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
+```
 
 ---
 
-### Step 5 — Run the first manual test
+### Step 5 — Deploy the Docker stack via SSH
+
+Deploy directly from the local clone so the `.env` file is picked up automatically.
+
+```bash
+cd /volume1/Docker/vpn-speed-tester
+docker compose up -d --build
+```
+
+This builds the orchestrator/speedtest-runner image and starts all three containers in the background.
+
+**Verify all three containers are running:**
+```bash
+docker ps
+```
+
+Expected output — all three showing `Up`:
+- `gluetun-test`
+- `speedtest-runner`
+- `orchestrator`
+
+You can also monitor the containers in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started.
+
+---
+
+### Step 6 — Run the first manual test
 
 A manual test triggers one full speed test window immediately (no waiting for the scheduler).
 
@@ -160,7 +170,7 @@ The test window runs until `TEST_WINDOW_HOURS` (default: 2 hours) elapses or you
 
 ---
 
-### Step 6 — Run the second manual test
+### Step 7 — Run the second manual test
 
 Same command. The queue builder picks up where it left off, prioritizing servers and tiers with the least coverage so far.
 
@@ -170,7 +180,7 @@ docker exec orchestrator npm run test:single
 
 ---
 
-### Step 7 — Verify results were written
+### Step 8 — Verify results were written
 
 ```bash
 # Check the results file exists

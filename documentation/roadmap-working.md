@@ -26,7 +26,7 @@ All Phase 1 work is done:
 > Nothing else matters until the stack runs end-to-end on the NAS with real data.
 
 ### Repository Setup
-- [ ] Push local repo to GitHub (`git push -u origin main`)
+- [ ] Push local repo to GitHub (`git push -u origin master`)
 - [ ] Confirm repo is visible on GitHub before touching the NAS
 
 ### NAS — One-Time Setup
@@ -41,23 +41,43 @@ All Phase 1 work is done:
 - `sysop` and `networkadmin` are equivalent for this project's purposes.
 
 ### NAS — Clone & Configure
-- [ ] Clone repo: `cd /volume1/Docker && git clone <repo-url> vpn-speed-tester`
-- [ ] Copy `.env.example` → `.env` and fill in WireGuard keys (get from AirVPN Client Area → Config Generator → WireGuard)
-- [ ] Create required volume directories on NAS:
+- [ ] Clone repo onto NAS:
+  ```bash
+  ssh nas   # or: ssh networkadmin@10.1.10.254 -p 8322
+  cd /volume1/Docker
+  git clone https://github.com/NickDeckerDevs/vpn-speed-tester.git vpn-speed-tester
   ```
+- [ ] Copy `.env` from Mac to NAS (run this from your Mac, not the NAS):
+  ```bash
+  scp -P 8322 ~/repos/vpn-speed-tester/.env sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/.env
+  # Or if the `nas` alias is set in ~/.ssh/config:
+  # scp ~/repos/vpn-speed-tester/.env nas:/volume1/Docker/vpn-speed-tester/.env
+  ```
+- [ ] Create required data directories on the NAS (these are Volume 2 paths the containers write to — separate from the repo on Volume 1):
+  ```bash
   mkdir -p /volume2/data/vpn-speed-tests/snapshots
   mkdir -p /volume2/data/vpn-speed-tests/report
   mkdir -p /volume2/data/vpn-speed-tests/logs
   ```
-- [ ] Copy `report/index.html` to `/volume2/data/vpn-speed-tests/report/index.html`
+- [ ] Copy `report/index.html` from the cloned repo to the Volume 2 report directory:
+  ```bash
+  cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
+  ```
 
-### NAS — Deploy via Portainer
-- [ ] Open Portainer: `http://10.1.10.254:9000`
-- [ ] Stacks → Add stack → name: `vpn-speed-tester`
-- [ ] Build method: Repository → enter GitHub repo URL, branch: `main`, compose file: `docker-compose.yml`
-- [ ] Add environment variables: `WIREGUARD_PRIVATE_KEY`, `WIREGUARD_PRESHARED_KEY`
-- [ ] Deploy the stack
-- [ ] Confirm all 3 containers show `Up`: gluetun-test, speedtest-runner, orchestrator
+### NAS — Deploy via Docker Compose (SSH)
+Deploying directly from the local clone so the `.env` file is picked up automatically.
+
+- [ ] SSH into the NAS and run:
+  ```bash
+  cd /volume1/Docker/vpn-speed-tester
+  docker compose up -d --build
+  ```
+- [ ] Confirm all 3 containers show `Up`:
+  ```bash
+  docker ps
+  ```
+  Expected: `gluetun-test`, `speedtest-runner`, `orchestrator` all `Up`
+- [ ] (Optional) View the stack in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started
 
 ### First Manual Test Run
 - [ ] Run: `docker exec orchestrator npm run test:single`
