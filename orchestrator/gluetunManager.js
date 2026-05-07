@@ -44,6 +44,12 @@ async function switchServer(serverName) {
 
   await newContainer.start();
   logger.info(`switchServer: container started → ${serverName}`);
+
+  logger.info('switchServer: restarting speedtest-runner to attach to new gluetun namespace...');
+  const speedtestContainer = docker.getContainer(config.SPEEDTEST_CONTAINER);
+  await speedtestContainer.restart();
+  logger.info('switchServer: speedtest-runner restarted');
+  await new Promise(resolve => setTimeout(resolve, 3000));
 }
 
 async function waitForTunnel() {
@@ -59,14 +65,15 @@ async function waitForTunnel() {
 
     try {
       const data = await httpClient.get(
-        config.TUNNEL_CHECK_URL,
+        config.GLUETUN_CONTROL_URL,
         { timeout: config.TUNNEL_POLL_MS },
         'tunnel check'
       );
-      if (data) {
-        logger.info(`waitForTunnel: tunnel confirmed after ${attempt} attempt(s) — ${JSON.stringify(data)}`);
+      if (data && data.status === 'running') {
+        logger.info(`waitForTunnel: tunnel confirmed after ${attempt} attempt(s)`);
         return data;
       }
+      logger.debug(`waitForTunnel: gluetun status = ${data && data.status}`);
     } catch (err) {
       logger.debug(`waitForTunnel: not ready (${err.message.replace(/^\[tunnel check\] /, '')})`);
     }

@@ -1,27 +1,22 @@
 # qBittorrent Authentication Debugging
 
-Debugging guide for the `"Fails." + 403` authentication failure blocking the orchestrator pre-flight pause step.
+Debugging guide for qBittorrent integration failures blocking the orchestrator pre-flight pause step.
 
 ---
 
-## Resolution (2026-05-07)
+## Current Status (2026-05-07)
+
+Fully resolved. Auth works (200 "Ok." + SID cookie) and the v5.x endpoint renames are applied. The orchestrator should now pause and resume qBittorrent successfully.
+
+---
+
+## Auth Resolution (2026-05-07)
 
 **Root causes found and fixed:**
 
 1. **`env_file` missing from docker-compose** — `QBT_PASSWORD` was set in `.env` on the NAS but the orchestrator service had no `env_file` directive, so the variable never reached the container. `config.js` defaulted it to `''`. Fixed by adding `env_file: .env` to the orchestrator service in `docker-compose.yml`.
 2. **Repeated empty-password attempts triggered an IP ban** — `loginAttempted` was set to `true` on first failure and never reset, so the ban compounded across restarts. Fixed in [orchestrator/qbtClient.js](../orchestrator/qbtClient.js): flag now resets on every failure path.
 3. **403 on the login endpoint was swallowed** — axios threw on non-2xx responses, landing in the catch block with a misleading "proceeding without session" message instead of a clear "IP banned" error. Fixed by adding `validateStatus: () => true` to the login axios call.
-
-**Verify the fix after deploying:**
-```bash
-./deploy.sh --test
-```
-Expected log lines past the pre-flight step:
-```
-[INFO ] qBittorrent login response — status: 200, body: "Ok."
-[INFO ] qBittorrent session established
-[INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
-```
 
 ---
 
@@ -120,6 +115,91 @@ Fixed catch block:
   logger.warn(`qBittorrent login attempt failed (${err.message}) — proceeding without session`);
 }
 ```
+
+---
+
+## Phase 5 — qBittorrent v5.x API Endpoint Rename ✓ Complete
+
+**Symptom:** Login succeeds (200 "Ok." + SID cookie, `"qBittorrent session established"` in logs), but the next call immediately returns `404 Not Found`:
+
+```
+[ERROR] [qBittorrent pause] Client error 404: Not Found
+[ERROR] Manual run failed: [qBittorrent pause] Not Found
+```
+
+**Root cause:** qBittorrent v5.0.0 made breaking API changes. The NAS qBittorrent Docker container has likely been updated to v5.x:
+
+| v4.x endpoint | v5.x endpoint |
+|---|---|
+| `POST /api/v2/torrents/pause` | `POST /api/v2/torrents/stop` |
+| `POST /api/v2/torrents/resume` | `POST /api/v2/torrents/start` |
+| body: `hashes=all` | body: `hashes=all` (unchanged) |
+| `filter=paused` (info poll) | `filter=stopped` |
+
+**Step 1 — Verify version (30s, no redeploy):**
+
+```bash
+curl -s "http://10.1.10.254:8080/api/v2/app/version"
+```
+
+- `v5.x.x` → proceed with fix below
+- `v4.x.x` → different problem; test the endpoint directly with curl + a real SID
+
+**Step 2 — Fix [orchestrator/qbtClient.js](../orchestrator/qbtClient.js):**
+
+Three changes:
+
+```js
+// pauseAll — endpoint name
+`${config.QBT_BASE_URL}/api/v2/torrents/stop`,   // was: torrents/pause
+
+// pauseAll — body param: hashes= is UNCHANGED in v5 (ids= was tried and returns 400)
+'hashes=all',
+
+// pauseAll polling — filter name
+`${config.QBT_BASE_URL}/api/v2/torrents/info?filter=stopped`,  // was: filter=paused
+
+// resumeAll — endpoint name
+`${config.QBT_BASE_URL}/api/v2/torrents/start`,   // was: torrents/resume
+
+// resumeAll — body param: also unchanged
+'hashes=all',
+```
+
+**Step 3 — Also make pre-flight non-fatal in scheduler.js:**
+
+Wrap the `pauseAll()` pre-flight call in a try/catch that logs a warning instead of aborting. If qBittorrent is unreachable or its API changes again, speed tests still run.
+
+**Expected log after fix:**
+```
+[INFO ] qBittorrent login response — status: 200, body: "Ok."
+[INFO ] qBittorrent session established
+[INFO ] pauseAll: pause command accepted — polling for confirmation...
+[INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
+```
+
+---
+
+## Phase 6 — Force-Start Only Downloading Torrents ✓ Complete
+
+**Symptom:** After `resumeAll()`, completed torrents that were previously seeding got force-started and showed as active, which wasn't desired. Only in-progress downloads should be force-started.
+
+**Root cause:** The initial fix called `setForceStart` with `hashes=all`, which applied to every torrent regardless of state.
+
+**Fix:** Snapshot the hashes of downloading torrents *before* stopping, then force-start only those on resume.
+
+`pauseAll()` now queries `filter=downloading` before issuing the stop command and stores the hashes in a module-level variable. `resumeAll()` reads that variable, calls `setForceStart` with only those specific hashes (pipe-separated), then clears it.
+
+**Expected log after fix:**
+```
+[INFO ] pauseAll: snapshotted 5 downloading torrent(s)
+[INFO ] pauseAll: confirmed — N torrent(s) paused (attempt 1)
+...
+[INFO ] resumeAll: force-starting 5 previously-downloading torrent(s)...
+[INFO ] resumeAll: torrents resumed
+```
+
+Completed/seeding torrents resume to their normal state without being force-started.
 
 ---
 

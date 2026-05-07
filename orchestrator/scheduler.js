@@ -21,7 +21,11 @@ async function runSpeedTestWindow() {
 
   // ── Step 1: Pre-flight ────────────────────────────────────────
   logger.info('PRE-FLIGHT: pausing qBittorrent...');
-  await pauseAll();
+  try {
+    await pauseAll();
+  } catch (err) {
+    logger.warn(`PRE-FLIGHT: qBittorrent pause failed — continuing anyway (${err.message})`);
+  }
 
   logger.info('PRE-FLIGHT: fetching live AirVPN server list...');
   const liveServers = await fetchUSServers();
@@ -190,7 +194,7 @@ async function runSpeedTestWindow() {
   const today = new Date().toISOString().slice(0, 10);
   await commitResults(`chore: recalculate aggregates ${today}`);
 
-  logger.info('SHUTDOWN: stopping gluetun-test...');
+  logger.info('SHUTDOWN: stopping gluetun-speedtest...');
   await stopGluetun();
 
   logger.info('SHUTDOWN: resuming qBittorrent...');

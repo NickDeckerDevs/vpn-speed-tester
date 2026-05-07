@@ -10,14 +10,21 @@ This is a living document. Check items off as they're completed. Update it when 
 
 ## Current State
 
-All Phase 1 work is done:
+All Phase 1 work is done and three pre-flight bugs have been fixed:
 - All 13 orchestrator modules built and wired together
-- Docker stack (`docker-compose.yml`) defined with gluetun-test, speedtest-runner, orchestrator
+- Docker stack (`docker-compose.yml`) defined with `gluetun-speedtest`, `speedtest-runner`, `orchestrator`
 - Static HTML report built (`report/index.html`) — two tabs, all charts
 - Logging (`logger.js`) and HTTP error handling (`httpClient.js`) integrated
 - `get-started-keep-going.md` written with setup and troubleshooting guide
 
-**What hasn't happened yet:** the stack has never run on the NAS. No real test data exists. That's P0.
+**Bugs fixed (2026-05-07):**
+- `waitForTunnel()` now polls `http://gluetun-speedtest:8000/v1/vpn/status` (gluetun control API) instead of `check.airservers.org` — the external DNS lookup failed during gluetun's stop/remove/create cycle
+- `runSpeedtest()` now exec's `speedtest-cli` inside `speedtest-runner` via dockerode — it was previously running in the orchestrator process, bypassing the VPN entirely
+- `switchServer()` now restarts `speedtest-runner` after recreating `gluetun-speedtest` — the shared network namespace must be re-attached after each container recreation
+- `deploy.sh` now does `docker compose down` + force-removes orphaned containers before every rebuild, preventing name conflicts caused by the orchestrator's dynamic container recreation
+- Added `DNS_IPV6=false` to `gluetun-speedtest` environment, matching the production stack
+
+**What hasn't happened yet:** the stack has never completed a full run on the NAS. No real test data exists. That's P0.
 
 ---
 
@@ -76,15 +83,16 @@ Deploying directly from the local clone so the `.env` file is picked up automati
   ```bash
   docker ps
   ```
-  Expected: `gluetun-test`, `speedtest-runner`, `orchestrator` all `Up`
+  Expected: `gluetun-speedtest`, `speedtest-runner`, `orchestrator` all `Up`
 - [ ] (Optional) View the stack in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started
 
 ### First Manual Test Run
 - [ ] Run: `docker exec orchestrator npm run test:single`
 - [ ] Watch logs in parallel: `docker logs -f orchestrator`
 - [ ] Confirm qBittorrent paused (log line: `[qBittorrent] all torrents paused`)
-- [ ] Confirm gluetun-test switches to a server (log: `[gluetunManager] container started`)
-- [ ] Confirm tunnel comes up (log: `[tunnel check] tunnel confirmed`)
+- [ ] Confirm gluetun-speedtest switches to a server (log: `switchServer: container started → Aladfar`)
+- [ ] Confirm speedtest-runner restarted (log: `switchServer: speedtest-runner restarted`)
+- [ ] Confirm tunnel comes up (log: `waitForTunnel: tunnel confirmed after N attempt(s)`)
 - [ ] Confirm 3 speed test runs complete with Mbps values logged
 - [ ] Confirm `results.json` written: `ls -lh /volume2/data/vpn-speed-tests/results.json`
 - [ ] Confirm git commit: `cd /volume2/data/vpn-speed-tests && git log --oneline`

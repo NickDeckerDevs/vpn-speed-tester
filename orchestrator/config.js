@@ -1,13 +1,14 @@
 module.exports = {
   AIRVPN_STATUS_URL:    'https://airvpn.org/api/status',
-  TUNNEL_CHECK_URL:     'https://check.airservers.org/api/',
-  QBT_BASE_URL:         'http://10.1.10.254:8080',
+  GLUETUN_CONTROL_URL:  'http://gluetun-speedtest:8000/v1/vpn/status',
+  SPEEDTEST_CONTAINER:  'speedtest-runner',
+  QBT_BASE_URL:         process.env.QBT_BASE_URL || 'localhost:8080',
   QBT_USERNAME:         process.env.QBT_USERNAME || 'admin',
   QBT_PASSWORD:         process.env.QBT_PASSWORD || '',
   RESULTS_PATH:         '/data/results.json',
   SNAPSHOTS_PATH:       '/data/snapshots/',
   GIT_REPO_PATH:        '/data/',
-  GLUETUN_CONTAINER:    'gluetun-test',
+  GLUETUN_CONTAINER:    'gluetun-speedtest',
   LOGS_PATH:            '/data/logs/',
 
   CAPE_CORAL_LAT:       26.5629,

@@ -84,7 +84,7 @@ cd ~/repos/vpn-speed-tester
 
 This rsyncs all code and config (including `.env`) to the NAS, then rebuilds and restarts the Docker stack. To push any local changes to the NAS, just run it again.
 
-> **What it does internally:** rsync with `--exclude='.git'` and `--exclude='node_modules'`, then `docker compose up -d --build` on the NAS via SSH.
+> **What it does internally:** rsync with `--exclude='.git'` and `--exclude='node_modules'`, then `docker compose down` followed by `docker compose up -d --build` on the NAS via SSH. The down step also force-removes any orphaned containers by name (`gluetun-speedtest`, `speedtest-runner`, `orchestrator`) before the rebuild, since the orchestrator recreates `gluetun-speedtest` dynamically and those containers lose their compose labels.
 
 ---
 
@@ -147,7 +147,7 @@ sudo docker ps
 ```
 
 Expected — all three showing `Up`:
-- `gluetun-test` — shows `(healthy)` after ~45 seconds
+- `gluetun-speedtest` — shows `(healthy)` after ~45 seconds
 - `speedtest-runner`
 - `orchestrator`
 
@@ -155,13 +155,17 @@ Expected — all three showing `Up`:
 
 ---
 
-> **Session checkpoint (2026-05-07):** Steps 1–5 are complete. Auth issues resolved (see `documentation/qbittorrent-auth-debug.md`). Root cause was `env_file` missing from docker-compose — credentials never reached the orchestrator container. Fixed in `docker-compose.yml`. Next session starts here at Step 6.
+> **Session checkpoint (2026-05-07):** Steps 1–5 are complete. The full qBittorrent auth and API chain is working end-to-end — see [documentation/qbittorrent-auth-debug.md](qbittorrent-auth-debug.md) for the complete resolution history. Key fixes: `env_file` added to docker-compose so credentials reach the container; v5.x API endpoint renames applied (`pause→stop`, `resume→start`, `filter=paused→filter=stopped`); force-start on resume scoped to only previously-downloading torrents.
+>
+> **Session checkpoint (2026-05-07, continued):** Three additional bugs found and fixed before first test run. (1) `waitForTunnel()` was polling `check.airservers.org` — an external URL that DNS-fails when gluetun is cycling. Fixed: now polls gluetun's internal control API at `http://gluetun-speedtest:8000/v1/vpn/status`, no DNS needed. (2) `runSpeedtest()` was running `speedtest-cli` directly in the orchestrator process (bypassing the VPN tunnel entirely). Fixed: now uses dockerode `exec` inside `speedtest-runner`, which shares gluetun's network namespace. (3) `speedtest-runner` loses its shared network namespace when gluetun is removed and recreated — fixed by restarting speedtest-runner inside `switchServer()` after the new gluetun starts. Also: `deploy.sh` updated to `docker compose down` before every rebuild, preventing orphaned container conflicts.
+>
+> Next session starts at Step 6.
 
 ---
 
 ### Step 6 — Run the first manual test
 
-Use `./deploy.sh --test` from your Mac — it syncs, rebuilds, waits 15 seconds for the containers to be ready, then triggers the test and streams the logs live:
+Use `./deploy.sh --test` from your Mac — it syncs, takes the stack down, rebuilds fresh, waits 40 seconds for `gluetun-speedtest` to become healthy, then triggers the test. When the test finishes, **the stack is automatically torn down**:
 
 ```bash
 cd ~/repos/vpn-speed-tester
@@ -177,8 +181,9 @@ sudo docker exec orchestrator npm run test:single
 What you'll see:
 - Orchestrator pauses qBittorrent
 - Fetches current AirVPN server status
-- Connects to a server via gluetun, waits for the VPN tunnel
-- Runs 3 speed tests on that server
+- Switches gluetun to a server (stop/remove/create cycle), restarts speedtest-runner to attach to new namespace
+- Polls `http://gluetun-speedtest:8000/v1/vpn/status` until gluetun reports `"running"`
+- Runs 3 speed tests on that server (exec'd inside speedtest-runner, traffic goes through VPN)
 - Writes results to `results.json` and commits to git
 - Resumes qBittorrent when done
 
@@ -370,14 +375,14 @@ Errors are prefixed with a `[context]` tag that identifies where in the code the
 | What you see in the log | Likely cause | First step |
 |---|---|---|
 | `[context] ECONNREFUSED` | A service is down (qBittorrent, container) | `sudo docker ps` — which containers are running? |
-| `[context] ENOTFOUND — DNS failure` | VPN tunnel is not up | Check gluetun container logs |
+| `[context] ENOTFOUND — DNS failure` | External DNS unreachable (not a tunnel check — those now use gluetun's internal API) | Check orchestrator's outbound network; check gluetun logs |
 | `[context] ETIMEDOUT` | Network or service is overloaded | Wait a few minutes, then check again |
 | `[context] 429 Rate Limited — retry-after: Xs` | AirVPN or speedtest API rate limit hit | Reduce test frequency; wait the retry-after period |
-| `[context] Auth error (401/403)` | qBittorrent credentials wrong or empty | Check `QBT_PASSWORD` in `.env` — see `documentation/qbittorrent-auth-debug.md` |
+| `[context] Auth error (401/403)` | qBittorrent credentials wrong or empty | Check `QBT_PASSWORD` in `.env` — see [qbittorrent-auth-debug.md](qbittorrent-auth-debug.md) |
 | `runSpeedtest: speedtest-cli exited 127` | speedtest-cli not found in container | Rebuild the Docker image |
-| `waitForTunnel: attempt X (+Ys elapsed)...` then timeout | VPN tunnel never established | Check gluetun logs, verify WireGuard keys in `.env` |
+| `waitForTunnel: attempt X (+Ys elapsed)...` then timeout | gluetun never reported `"running"` — tunnel not established | Check gluetun logs (`docker logs gluetun-speedtest`), verify WireGuard keys in `.env` |
 | `SESSION ERROR [server-name]: ...` | One server test failed | Non-fatal — other servers continue; note which server failed |
-| `gluetun-test` shows `unhealthy` or exits at startup | Missing `WIREGUARD_ADDRESSES` in `.env`, or health checks firing before tunnel is up | Confirm `WIREGUARD_ADDRESSES=x.x.x.x/32` is set in `.env`; if present, wait 45–60 seconds for the tunnel to establish |
+| `gluetun-speedtest` shows `unhealthy` or exits at startup | Missing `WIREGUARD_ADDRESSES` in `.env`, or health checks firing before tunnel is up | Confirm `WIREGUARD_ADDRESSES=x.x.x.x/32` is set in `.env`; if present, wait 45–60 seconds for the tunnel to establish |
 | `permission denied while trying to connect to the Docker daemon socket` | NAS user not in docker group | Prefix command with `sudo` |
 
 #### 5. Check data integrity
@@ -417,7 +422,7 @@ When reporting an issue, gather the following before reaching out:
 
 5. **Gluetun logs** (if the error looks tunnel-related):
    ```bash
-   docker logs gluetun-test --tail=50
+   docker logs gluetun-speedtest --tail=50
    ```
 
 6. **Any recent changes** — config edits, container restarts, `.env` changes, new deployments

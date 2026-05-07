@@ -1,8 +1,8 @@
 services:
 
-  gluetun-test:
+  gluetun-speedtest:
     image: qmcgaw/gluetun:v3.41.1
-    container_name: gluetun-test
+    container_name: gluetun-speedtest
     cap_add:
       - NET_ADMIN
     devices:
@@ -18,9 +18,10 @@ services:
       - DNS_SERVERS=1.1.1.1,8.8.8.8
       - EXTRA_ROUTES=10.1.10.0/24
       - FIREWALL_LOCAL_NETWORK_ACCESS=true
+      - DNS_IPV6=false
       - TZ=America/New_York
     volumes:
-      - /volume1/Docker/vpn-speed-tester/gluetun-test:/gluetun
+      - /volume1/Docker/vpn-speed-tester/gluetun-speedtest:/gluetun
     networks:
       - vpn-test
     restart: unless-stopped
@@ -36,9 +37,9 @@ services:
       context: ./orchestrator
       dockerfile: Dockerfile
     container_name: speedtest-runner
-    network_mode: "service:gluetun-test"
+    network_mode: "service:gluetun-speedtest"
     depends_on:
-      gluetun-test:
+      gluetun-speedtest:
         condition: service_healthy
     volumes:
       - /volume2/data/vpn-speed-tests:/data

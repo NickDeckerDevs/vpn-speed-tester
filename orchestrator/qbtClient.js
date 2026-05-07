@@ -5,6 +5,7 @@ const config = require('./config');
 
 let sid = null;
 let loginAttempted = false;
+let downloadingHashesBeforePause = null;
 
 function qbtHeaders() {
   const headers = {
@@ -66,11 +67,30 @@ async function pauseAll() {
 
   await login();
 
+  // Snapshot which torrents are actively downloading so resumeAll can restore only those
+  try {
+    const downloading = await httpClient.get(
+      `${config.QBT_BASE_URL}/api/v2/torrents/info?filter=downloading`,
+      { headers: qbtHeaders().headers, timeout: 10000 },
+      'qBittorrent downloading snapshot'
+    );
+    if (Array.isArray(downloading) && downloading.length > 0) {
+      downloadingHashesBeforePause = downloading.map(t => t.hash).join('|');
+      logger.info(`pauseAll: snapshotted ${downloading.length} downloading torrent(s)`);
+    } else {
+      downloadingHashesBeforePause = null;
+      logger.info('pauseAll: no downloading torrents to snapshot');
+    }
+  } catch (err) {
+    downloadingHashesBeforePause = null;
+    logger.warn(`pauseAll: could not snapshot downloading torrents (${err.message})`);
+  }
+
   const headers = qbtHeaders();
   logger.info(`pauseAll: request headers — ${JSON.stringify(headers.headers)}`);
 
   await httpClient.post(
-    `${config.QBT_BASE_URL}/api/v2/torrents/pause`,
+    `${config.QBT_BASE_URL}/api/v2/torrents/stop`,
     'hashes=all',
     { ...headers, timeout: 30000 },
     'qBittorrent pause'
@@ -85,7 +105,7 @@ async function pauseAll() {
     attempt++;
     try {
       const data = await httpClient.get(
-        `${config.QBT_BASE_URL}/api/v2/torrents/info?filter=paused`,
+        `${config.QBT_BASE_URL}/api/v2/torrents/info?filter=stopped`,
         { headers: qbtHeaders().headers, timeout: 10000 },
         'qBittorrent pause status'
       );
@@ -109,11 +129,24 @@ async function resumeAll() {
   await login();
 
   await httpClient.post(
-    `${config.QBT_BASE_URL}/api/v2/torrents/resume`,
+    `${config.QBT_BASE_URL}/api/v2/torrents/start`,
     'hashes=all',
     { ...qbtHeaders(), timeout: 30000 },
     'qBittorrent resume'
   );
+
+  if (downloadingHashesBeforePause) {
+    logger.info(`resumeAll: force-starting ${downloadingHashesBeforePause.split('|').length} previously-downloading torrent(s)...`);
+    await httpClient.post(
+      `${config.QBT_BASE_URL}/api/v2/torrents/setForceStart`,
+      `hashes=${downloadingHashesBeforePause}&value=true`,
+      { ...qbtHeaders(), timeout: 30000 },
+      'qBittorrent force start'
+    );
+    downloadingHashesBeforePause = null;
+  } else {
+    logger.info('resumeAll: no downloading snapshot — skipping force-start');
+  }
 
   logger.info('resumeAll: torrents resumed');
 }

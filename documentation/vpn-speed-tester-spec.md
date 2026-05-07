@@ -99,8 +99,8 @@ Two entirely separate stacks. The production media stack is **never touched** du
 
 | Service | Image | Role | Network |
 |---------|-------|------|---------|
-| `gluetun-test` | `qmcgaw/gluetun:v3.41.1` | Isolated VPN gateway for testing only | `vpn-test` (172.21.0.0/24) |
-| `speedtest-runner` | Custom image (`node:20-slim` + `speedtest-cli`) | Runs `speedtest-cli` binary through gluetun-test, called via shell from orchestrator | `vpn-test` via `gluetun-test` |
+| `gluetun-speedtest` | `qmcgaw/gluetun:v3.41.1` | Isolated VPN gateway for testing only | `vpn-test` (172.21.0.0/24) |
+| `speedtest-runner` | Custom image (`node:20-slim` + `speedtest-cli`) | Runs `speedtest-cli` via dockerode `exec` — shares gluetun-speedtest's network namespace so all traffic is tunneled | `vpn-test` via `gluetun-speedtest` |
 | `orchestrator` | Custom image (`node:20-slim`) | Coordinates full test lifecycle — pure Node.js | `vpn-test` + Docker socket access |
 
 ### 3.3 Storage Layout
@@ -122,8 +122,8 @@ Two entirely separate stacks. The production media stack is **never touched** du
 ### 3.4 Network Isolation
 
 - `gluetun-test` uses a **different AirVPN port forward** than production Gluetun — they do not conflict
-- `speedtest-runner` uses `network_mode: service:gluetun-test` — all traffic tunneled through test VPN
-- `orchestrator` has Docker socket access (`/var/run/docker.sock`) for container restart operations
+- `speedtest-runner` uses `network_mode: service:gluetun-speedtest` — all traffic tunneled through test VPN; orchestrator exec's speedtest-cli inside it via dockerode so measurements go through the VPN
+- `orchestrator` has Docker socket access (`/var/run/docker.sock`) for container lifecycle operations (stop/remove/create gluetun-speedtest per server, restart speedtest-runner after each switch)
 - Production Gluetun and all its dependents (Radarr, Sonarr, qBittorrent, etc.) are unaffected
 
 ### 3.5 On the Four IP Addresses Per Server
@@ -190,15 +190,15 @@ Latitude:   26.5629° N
 Longitude:  81.9495° W
 ```
 
-### 4.5 AirVPN Tunnel Verification Endpoint
+### 4.5 Tunnel Verification — gluetun Control API
 
-Used to confirm the WireGuard tunnel is live before each test session begins. Only resolves through the VPN tunnel.
+Used to confirm the WireGuard tunnel is live before each test session begins. The orchestrator polls gluetun's built-in HTTP control server, which is accessible container-to-container on the `vpn-test` bridge without external DNS.
 
 ```
-GET https://check.airservers.org/api/
+GET http://gluetun-speedtest:8000/v1/vpn/status
 ```
 
-Returns JSON with connected server info. A successful response confirms the tunnel is established and routing correctly.
+Returns `{"status":"starting"}` while connecting and `{"status":"running"}` once the tunnel is established. The orchestrator polls every 5 seconds up to a 60-second timeout. This replaced the former external check (`check.airservers.org`) which failed with DNS errors during the gluetun stop/remove/create cycle.
 
 ---
 
@@ -360,9 +360,9 @@ One file per hour. Captures all 50 US servers at a point in time. Used for load 
 
 1. **Check:** is `current_time >= window_end`? If yes → jump to Step 3
 2. Pick next server from queue
-3. Update `gluetun-test` environment: set `SERVER_NAMES` to target server's `public_name`
-4. Restart `gluetun-test` container via Docker SDK
-5. Poll `https://check.airservers.org/api/` through tunnel every 5 seconds, up to 60 second timeout
+3. Update `gluetun-speedtest` environment: set `SERVER_NAMES` to target server's `public_name`
+4. Stop, remove, and recreate `gluetun-speedtest` container via Docker SDK; restart `speedtest-runner` to re-attach to the new network namespace
+5. Poll `http://gluetun-speedtest:8000/v1/vpn/status` every 5 seconds until `status === "running"`, up to 60 second timeout
 6. On tunnel confirmed: fetch status API — store full response as `status_at_session_start`
 7. Classify tier based on `currentload` at this moment (may differ from queue classification — use this value)
 8. **Run 3 test runs in sequence:**
@@ -414,7 +414,7 @@ GET http://10.1.10.254:8080/api/v2/torrents/info?filter=paused
 
 ### 7.1 Language & Runtime
 
-Node.js 20 in a custom Docker image based on `node:20-slim`. The orchestrator is **pure JavaScript**. The only non-JS component is the `speedtest-cli` binary (installed via pip into the same image) which is called via `child_process` — you never write or read Python.
+Node.js 20 in a custom Docker image based on `node:20-slim`. The orchestrator is **pure JavaScript**. The only non-JS component is the `speedtest-cli` binary (installed via pip into the same image). It is called via dockerode `exec` inside the `speedtest-runner` container — this ensures speedtest traffic routes through gluetun's VPN tunnel. You never write or read Python.
 
 **npm dependencies (`package.json`):**
 - `node-cron` — cron-style job scheduling
@@ -453,22 +453,26 @@ All environment-specific values live here — no hardcoding in logic modules.
 ```js
 module.exports = {
   AIRVPN_STATUS_URL:    'https://airvpn.org/api/status',
-  TUNNEL_CHECK_URL:     'https://check.airservers.org/api/',
+  GLUETUN_CONTROL_URL:  'http://gluetun-speedtest:8000/v1/vpn/status',  // internal — no DNS needed
+  SPEEDTEST_CONTAINER:  'speedtest-runner',
   QBT_BASE_URL:         'http://10.1.10.254:8080',
-  RESULTS_PATH:         '/volume2/data/vpn-speed-tests/results.json',
-  SNAPSHOTS_PATH:       '/volume2/data/vpn-speed-tests/snapshots/',
-  GIT_REPO_PATH:        '/volume2/data/vpn-speed-tests/git/',
-  GLUETUN_CONTAINER:    'gluetun-test',
+  QBT_USERNAME:         process.env.QBT_USERNAME || 'admin',
+  QBT_PASSWORD:         process.env.QBT_PASSWORD || '',
+  RESULTS_PATH:         '/data/results.json',
+  SNAPSHOTS_PATH:       '/data/snapshots/',
+  GIT_REPO_PATH:        '/data/',
+  GLUETUN_CONTAINER:    'gluetun-speedtest',
+  LOGS_PATH:            '/data/logs/',
 
   CAPE_CORAL_LAT:       26.5629,
   CAPE_CORAL_LON:       -81.9495,
 
-  TEST_WINDOW_HOURS:    2,       // How long the test window runs
-  TEST_START_HOUR:      3,       // 3:00 AM — node-cron: '0 3 * * *'
+  TEST_WINDOW_HOURS:    2,
+  TEST_START_HOUR:      3,
   RUNS_PER_SESSION:     3,
-  MS_BETWEEN_RUNS:      15000,   // 15 seconds
-  TUNNEL_POLL_MS:       5000,    // 5 seconds
-  TUNNEL_TIMEOUT_MS:    60000,   // 60 seconds
+  MS_BETWEEN_RUNS:      15000,
+  TUNNEL_POLL_MS:       5000,
+  TUNNEL_TIMEOUT_MS:    60000,
 
   TIER_THRESHOLDS: {
     low:    { min: 0,  max: 30  },
@@ -481,31 +485,37 @@ module.exports = {
 
 ### 7.4 Gluetun Server Switching
 
-Gluetun is configured via environment variables. The orchestrator updates the container's env and restarts it using `dockerode`:
+Docker does not support updating environment variables on a running container. To switch servers, the orchestrator uses a stop → remove → create cycle via dockerode. After the new gluetun starts, `speedtest-runner` is restarted to re-attach to the new network namespace (its `network_mode: service:gluetun-speedtest` binding is tied to the container's namespace, which changes on each recreate).
 
 ```js
-const Docker = require('dockerode');
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Simplified — see gluetunManager.js for full implementation
+async function switchServer(serverName) {
+  const container = docker.getContainer('gluetun-speedtest');
+  const info = await container.inspect();
 
-async function switchGluetunServer(serverName) {
-  const container = docker.getContainer('gluetun-test');
+  const newEnv = (info.Config.Env || [])
+    .filter(e => !e.startsWith('SERVER_NAMES='))
+    .concat(`SERVER_NAMES=${serverName}`);
 
-  // Update SERVER_NAMES env var — Gluetun picks it up on next start
-  await container.update({
-    Env: [
-      'VPN_SERVICE_PROVIDER=airvpn',
-      'VPN_TYPE=wireguard',
-      `SERVER_NAMES=${serverName}`,
-      `WIREGUARD_PRIVATE_KEY=${process.env.WIREGUARD_PRIVATE_KEY}`,
-      `WIREGUARD_PRESHARED_KEY=${process.env.WIREGUARD_PRESHARED_KEY}`,
-    ]
+  await container.stop({ t: 10 });
+  await container.remove();
+
+  const newContainer = await docker.createContainer({
+    name: 'gluetun-speedtest',
+    Image: info.Config.Image,
+    Env: newEnv,
+    ExposedPorts: info.Config.ExposedPorts,
+    HostConfig: info.HostConfig,
   });
+  await newContainer.start();
 
-  await container.restart();
+  // Re-attach speedtest-runner to new gluetun namespace
+  await docker.getContainer('speedtest-runner').restart();
+  await new Promise(resolve => setTimeout(resolve, 3000));
 }
 ```
 
-> Gluetun's `SERVER_NAMES` env var accepts AirVPN's `public_name` directly — no IP address manipulation needed. The orchestrator only needs to pass the server name string.
+> Gluetun's `SERVER_NAMES` env var accepts AirVPN's `public_name` directly — no IP address manipulation needed.
 
 ### 7.5 Atomic Writes to `results.json`
 
@@ -524,24 +534,26 @@ async function writeResults(data, filePath) {
 }
 ```
 
-### 7.6 Shelling Out to `speedtest-cli`
+### 7.6 Running `speedtest-cli` via Docker Exec
 
-The speedtest binary is called as a subprocess. The `--json` flag makes output trivial to parse:
+The speedtest binary is exec'd inside `speedtest-runner` (which shares gluetun's network namespace) so that all test traffic is routed through the VPN tunnel. Running it in the orchestrator process would bypass the VPN entirely.
 
 ```js
-const { spawnSync } = require('child_process');
-
-function runSpeedtest() {
-  const result = spawnSync('speedtest-cli', ['--json', '--secure'], {
-    encoding: 'utf8',
-    timeout: 120000, // 2 minute timeout per run
+async function runSpeedtest() {
+  const container = docker.getContainer('speedtest-runner');
+  const exec = await container.exec({
+    Cmd: ['speedtest-cli', '--json', '--secure'],
+    AttachStdout: true,
+    AttachStderr: true,
   });
 
-  if (result.status !== 0) {
-    throw new Error(`speedtest-cli failed: ${result.stderr}`);
-  }
+  const stream = await exec.start({});
+  const { stdout } = await collectStream(container, stream);  // demuxStream wrapper
 
-  const data = JSON.parse(result.stdout);
+  const inspected = await exec.inspect();
+  if (inspected.ExitCode !== 0) throw new Error(`speedtest-cli exited ${inspected.ExitCode}`);
+
+  const data = JSON.parse(stdout.trim());
   return {
     download_mbps: parseFloat((data.download / 1_000_000).toFixed(2)),
     upload_mbps:   parseFloat((data.upload   / 1_000_000).toFixed(2)),
@@ -585,9 +597,9 @@ function runSpeedtest() {
 ```yaml
 services:
 
-  gluetun-test:
+  gluetun-speedtest:
     image: qmcgaw/gluetun:v3.41.1
-    container_name: gluetun-test
+    container_name: gluetun-speedtest
     cap_add:
       - NET_ADMIN
     devices:
@@ -597,19 +609,24 @@ services:
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
       - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
       - SERVER_COUNTRIES=United States
       - SERVER_NAMES=Aladfar          # orchestrator overwrites this per test
-      - FIREWALL_OUTBOUND_SUBNETS=10.1.10.0/24
+      - DNS_SERVERS=1.1.1.1,8.8.8.8
+      - DNS_IPV6=false
+      - EXTRA_ROUTES=10.1.10.0/24
+      - FIREWALL_LOCAL_NETWORK_ACCESS=true
       - TZ=America/New_York
     volumes:
-      - /volume1/Docker/vpn-speed-tester/gluetun-test:/gluetun
+      - /volume1/Docker/vpn-speed-tester/gluetun-speedtest:/gluetun
     networks:
       - vpn-test
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ping", "-c", "1", "1.1.1.1"]
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
       interval: 30s
       timeout: 5s
+      start_period: 45s
       retries: 3
 
   speedtest-runner:
@@ -617,9 +634,9 @@ services:
       context: ./orchestrator      # same image as orchestrator — node:20-slim + speedtest-cli
       dockerfile: Dockerfile
     container_name: speedtest-runner
-    network_mode: "service:gluetun-test"
+    network_mode: "service:gluetun-speedtest"
     depends_on:
-      gluetun-test:
+      gluetun-speedtest:
         condition: service_healthy
     volumes:
       - /volume2/data/vpn-speed-tests:/data
@@ -630,10 +647,11 @@ services:
       context: ./orchestrator
       dockerfile: Dockerfile
     container_name: orchestrator
+    env_file: .env
     volumes:
       - /volume1/Docker/vpn-speed-tester/orchestrator:/config
       - /volume2/data/vpn-speed-tests:/data
-      - /var/run/docker.sock:/var/run/docker.sock   # Docker socket for container control
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=America/New_York
     networks:
@@ -810,7 +828,7 @@ After several weeks of hourly snapshots, use the pattern data to:
 | 8 | Distance sorting for test queue? | Distance from Cape Coral stored for analysis but NOT used for queue ordering. Queue is load-tier and completion-coverage driven. | May 2026 |
 | 9 | What if window ends mid-queue? | Soft boundary. Any session already started completes all 3 runs. Window end check only fires before starting a new session. | May 2026 |
 | 10 | First runs — manual or scheduled? | Start with 1–2 manual runs to validate the stack, review output, confirm JSON shape and report rendering. Then finalize server list and activate the schedule. | May 2026 |
-| 11 | Python or JavaScript for orchestrator? | JavaScript (Node.js 20). All orchestrator logic is pure JS. `speedtest-cli` is installed as a system binary via pip into the same Docker image and called via `child_process.spawnSync` — no Python code is written or maintained. | May 2026 |
+| 11 | Python or JavaScript for orchestrator? | JavaScript (Node.js 20). All orchestrator logic is pure JS. `speedtest-cli` is installed as a system binary via pip into the same Docker image and exec'd inside `speedtest-runner` via dockerode — traffic goes through the VPN tunnel. No Python code is written or maintained. | May 2026 |
 
 ---
 
