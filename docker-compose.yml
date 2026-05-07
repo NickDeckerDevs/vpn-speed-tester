@@ -49,6 +49,7 @@ services:
       context: ./orchestrator
       dockerfile: Dockerfile
     container_name: orchestrator
+    env_file: .env
     volumes:
       - /volume1/Docker/vpn-speed-tester/orchestrator:/config
       - /volume2/data/vpn-speed-tests:/data

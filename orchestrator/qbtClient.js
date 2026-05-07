@@ -23,11 +23,17 @@ async function login() {
     const resp = await axios.post(
       `${config.QBT_BASE_URL}/api/v2/auth/login`,
       `username=${encodeURIComponent(config.QBT_USERNAME)}&password=${encodeURIComponent(config.QBT_PASSWORD)}`,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': config.QBT_BASE_URL }, timeout: 10000 }
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': config.QBT_BASE_URL }, timeout: 10000, validateStatus: () => true }
     );
 
     const body = typeof resp.data === 'string' ? resp.data.trim() : JSON.stringify(resp.data);
     logger.info(`qBittorrent login response — status: ${resp.status}, body: "${body}"`);
+
+    if (resp.status === 403) {
+      loginAttempted = false;
+      logger.error('qBittorrent login failed — 403 on login endpoint. Docker bridge IP is likely banned by qBittorrent. Fix: add the orchestrator subnet to qBittorrent whitelist (WebUI → Tools → Options → Web UI → Bypass authentication for whitelisted IPs).');
+      return;
+    }
 
     const cookies = resp.headers['set-cookie'];
     logger.info(`qBittorrent login set-cookie header: ${JSON.stringify(cookies)}`);
@@ -50,7 +56,7 @@ async function login() {
     }
   } catch (err) {
     loginAttempted = false;
-    logger.warn(`qBittorrent login attempt failed (${err.message}) — proceeding without session`);
+    logger.error(`qBittorrent login request failed (${err.message}) — pause/resume will also fail until qBittorrent is reachable`);
   }
 }
 
