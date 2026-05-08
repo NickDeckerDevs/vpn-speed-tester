@@ -218,6 +218,58 @@
       color: #4b5563;
       font-size: 13px;
     }
+
+    #log-output {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 1rem;
+      overflow-y: auto;
+      height: 600px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-radius: 6px;
+      border: 1px solid #2d3748;
+    }
+
+    .log-controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .log-status {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 12px;
+    }
+
+    .log-btn {
+      padding: 8px 16px;
+      border: 1px solid #3b82f6;
+      border-radius: 6px;
+      background: #1e293b;
+      color: #3b82f6;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+
+    .log-btn:hover {
+      background: #3b82f6;
+      color: #fff;
+    }
+
+    .log-btn:disabled {
+      border-color: #4b5563;
+      color: #4b5563;
+      cursor: not-allowed;
+    }
+
+    .log-btn:disabled:hover {
+      background: #1e293b;
+    }
   </style>
 </head>
 <body>
@@ -227,6 +279,7 @@
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('speed')">Speed Tests</button>
     <button class="tab-btn" onclick="showTab('snapshots')">Hourly Snapshots</button>
+    <button class="tab-btn" onclick="showTab('logs')">Logs</button>
   </div>
   <span id="status-bar">Loading…</span>
 </header>
@@ -351,6 +404,23 @@
     </section>
 
   </div>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 3: Logs -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="tab-logs" class="tab-panel">
+
+    <section>
+      <h2>Application Logs</h2>
+      <div class="log-controls">
+        <button class="log-btn" onclick="refreshLog()">Refresh</button>
+        <button class="log-btn" id="watch-btn" onclick="toggleWatch()">Watch 5 min</button>
+      </div>
+      <div class="log-status" id="log-status">Loading…</div>
+      <pre id="log-output">Loading…</pre>
+    </section>
+
+  </div>
 </main>
 
 <script>
@@ -386,6 +456,10 @@ const CHART_DEFAULTS = {
 let results = {};
 let snapshots = [];
 const charts = {};
+let watchInterval = null;
+let watchTimeout = null;
+let seenLineCount = 0;
+let logsTabInitialized = false;
 
 // ── Tab switching ──────────────────────────────────────────────
 function showTab(id) {
@@ -393,6 +467,111 @@ function showTab(id) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`tab-${id}`).classList.add('active');
   event.target.classList.add('active');
+
+  if (id === 'logs' && !logsTabInitialized) {
+    logsTabInitialized = true;
+    refreshLog();
+  }
+}
+
+// ── Log functions ──────────────────────────────────────────────
+function getLogUrl() {
+  const d = new Date();
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `../logs/${yyyy}-${mm}-${dd}.log`;
+}
+
+async function fetchLogLines() {
+  const res = await fetch(getLogUrl(), { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  return text.split('\n').filter(l => l.trim() !== '');
+}
+
+function renderLines(lines) {
+  const output = document.getElementById('log-output');
+  output.textContent = lines.join('\n');
+  output.scrollTop = output.scrollHeight;
+}
+
+function updateStatus(msg) {
+  document.getElementById('log-status').textContent = msg;
+}
+
+async function refreshLog() {
+  try {
+    stopWatch();
+    const lines = await fetchLogLines();
+    const last200 = lines.slice(-200);
+    renderLines(last200);
+    updateStatus(`Last refreshed at ${new Date().toUTCString()}`);
+    seenLineCount = lines.length;
+  } catch (e) {
+    updateStatus(`Error: ${e.message}`);
+  }
+}
+
+function formatCountdown(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function toggleWatch() {
+  if (watchInterval) {
+    stopWatch();
+  } else {
+    startWatch();
+  }
+}
+
+function startWatch() {
+  const btn = document.getElementById('watch-btn');
+  btn.textContent = 'Stop Watching';
+  btn.disabled = false;
+
+  let timeRemaining = 300;
+
+  const tick = async () => {
+    try {
+      const lines = await fetchLogLines();
+      if (lines.length > seenLineCount) {
+        const newLines = lines.slice(seenLineCount);
+        const output = document.getElementById('log-output');
+        output.textContent += (output.textContent.trim() ? '\n' : '') + newLines.join('\n');
+        output.scrollTop = output.scrollHeight;
+        seenLineCount = lines.length;
+      }
+      timeRemaining--;
+      updateStatus(`Watching — ${formatCountdown(timeRemaining)} remaining`);
+
+      if (timeRemaining <= 0) {
+        stopWatch();
+      }
+    } catch (e) {
+      updateStatus(`Watch error: ${e.message}`);
+    }
+  };
+
+  watchInterval = setInterval(tick, 10000);
+  watchTimeout = setTimeout(() => stopWatch(), 300000);
+
+  updateStatus(`Watching — ${formatCountdown(timeRemaining)} remaining`);
+}
+
+function stopWatch() {
+  if (watchInterval) clearInterval(watchInterval);
+  if (watchTimeout) clearTimeout(watchTimeout);
+  watchInterval = null;
+  watchTimeout = null;
+
+  const btn = document.getElementById('watch-btn');
+  btn.textContent = 'Watch 5 min';
+  btn.disabled = false;
+
+  updateStatus(`Stopped watching at ${new Date().toUTCString()}`);
 }
 
 // ── Data loading ───────────────────────────────────────────────
