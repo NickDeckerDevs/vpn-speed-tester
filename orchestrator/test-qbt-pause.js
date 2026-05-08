@@ -5,24 +5,27 @@
 //   node test-qbt-pause.js --pause   (pause only, leave paused)
 
 const { pauseAll, resumeAll } = require('./qbtClient');
+const logger = require('./logger');
 
 const pauseOnly = process.argv.includes('--pause');
 
+
 (async () => {
+  logger.fn(__filename, 'async()', null);
   try {
-    console.log('>> pauseAll...');
+    logger.info('>> pauseAll...');
     await pauseAll();
-    console.log('>> pauseAll succeeded');
+    logger.info('>> pauseAll succeeded');
 
     if (!pauseOnly) {
-      console.log('>> resumeAll...');
+      logger.info('>> resumeAll...');
       await resumeAll();
-      console.log('>> resumeAll succeeded');
+      logger.info('>> resumeAll succeeded');
     } else {
-      console.log('>> --pause flag set — leaving torrents stopped');
+      logger.info('>> --pause flag set — leaving torrents stopped');
     }
   } catch (err) {
-    console.error('FAILED:', err.message);
+    logger.warn('FAILED:', err.message);
     process.exit(1);
   }
 })();
