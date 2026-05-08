@@ -60,7 +60,7 @@ echo "Syncing to NAS..."
 rsync -avz -e "ssh -p 8322" \
   --exclude='.git' \
   --exclude='node_modules' \
-  ~/repos/vpn-speed-tester/ \
+  "$(dirname "$0")/" \
   $NAS:$NAS_DIR/
 
 # ── Step 1.5: Ensure data directories exist and sync report ────────────────
