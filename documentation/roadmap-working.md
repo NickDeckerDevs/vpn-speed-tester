@@ -2,9 +2,32 @@
 
 **Project:** AirVPN Speed Tester  
 **Last Updated:** May 2026  
-**Phase 1 Status:** Complete — scaffold built, ready for first manual test run
+**Phase 1 Status:** Complete — scaffold built, all pre-flight bugs fixed, deploy flow hardened, docs current
 
 This is a living document. Check items off as they're completed. Update it when priorities shift or new ideas surface.
+
+---
+
+## Session Complete — 2026-05-07
+
+All planned pre-deploy work is done:
+
+- `deploy.sh` — validates all 7 `.env` vars before syncing; polls until containers are gone after teardown; `--test` flag removed ✅
+- `orchestrator/config.js` — `QBT_BASE_URL` fallback removed; startup guard throws on missing `QBT_BASE_URL` or `QBT_PASSWORD` ✅
+- `.env.example` — `SYSOP_SSH` documented; `QBT_BASE_URL` has real example format; all vars have inline comments ✅
+- `documentation/verified-completed-historical-only/` — `fix-queue-and-startup-logic.md`, `qbittorrent-auth-debug.md`, `initial-build-report.md` archived ✅
+- `documentation/get-started-keep-going.md` — rewritten: correct deploy flow, no `--test` references, no stale callout boxes ✅
+
+**Confirmed runtime flow:**
+```
+./deploy.sh          → validate .env → rsync → tear down → poll until containers gone → Done
+(NAS manually)       → sudo docker compose up -d --build
+orchestrator starts  → node main.js → scheduler.start() → cron registered
+3 AM cron fires      → runSpeedTestWindow() → pick server → switchServer() → 3 runs → commit
+manual test          → sudo docker exec orchestrator npm run test:single
+```
+
+**Next action: push to GitHub, then run the first manual test on the NAS.**
 
 ---
 
@@ -47,48 +70,32 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
 - Desktop: `ssh networkadmin@10.1.10.254 -p 8322`
 - `sysop` and `networkadmin` are equivalent for this project's purposes.
 
-### NAS — Sync & Configure
-> Note: `git` is not installed on the NAS. Use `rsync` from your Mac instead. Run all commands in this section from a Mac terminal (not an SSH session).
+### NAS — Sync & Deploy
 
-- [x] Sync repo to NAS via rsync (`.env` is included automatically):
+- [ ] Run `./deploy.sh` from your Mac — validates `.env`, rsyncs code, tears down old stack, polls until containers are gone
+- [ ] Create required data directories on the NAS (one-time, Volume 2 — separate from repo on Volume 1):
   ```bash
-  rsync -avz -e "ssh -p 8322" \
-    --exclude='.git' \
-    --exclude='node_modules' \
-    ~/repos/vpn-speed-tester/ \
-    sysop@10.1.10.254:/volume1/Docker/vpn-speed-tester/
-  ```
-  To push updates later, run the same command — rsync only transfers changed files.
-- [ ] Create required data directories on the NAS (these are Volume 2 paths the containers write to — separate from the repo on Volume 1):
-  ```bash
-  ssh nas  # or: ssh networkadmin@10.1.10.254 -p 8322
+  ssh nas
   mkdir -p /volume2/data/vpn-speed-tests/snapshots
   mkdir -p /volume2/data/vpn-speed-tests/report
   mkdir -p /volume2/data/vpn-speed-tests/logs
-  ```
-- [ ] Copy `report/index.html` from the synced repo to the Volume 2 report directory:
-  ```bash
   cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
   ```
-
-### NAS — Deploy via Docker Compose (SSH)
-Deploying directly from the local clone so the `.env` file is picked up automatically.
-
-- [ ] SSH into the NAS and run:
+- [ ] SSH into the NAS and bring the stack up:
   ```bash
   cd /volume1/Docker/vpn-speed-tester
-  docker compose up -d --build
+  sudo docker compose up -d --build
   ```
 - [ ] Confirm all 3 containers show `Up`:
   ```bash
-  docker ps
+  sudo docker ps
   ```
   Expected: `gluetun-speedtest`, `speedtest-runner`, `orchestrator` all `Up`
-- [ ] (Optional) View the stack in Portainer at `http://10.1.10.254:9000` — Portainer sees all running containers regardless of how they were started
+- [ ] (Optional) View the stack in Portainer at `http://10.1.10.254:9000`
 
 ### First Manual Test Run
-- [ ] Run: `docker exec orchestrator npm run test:single`
-- [ ] Watch logs in parallel: `docker logs -f orchestrator`
+- [ ] Run: `sudo docker exec orchestrator npm run test:single`
+- [ ] Watch logs in parallel: `sudo docker logs -f orchestrator`
 - [ ] Confirm qBittorrent paused (log line: `[qBittorrent] all torrents paused`)
 - [ ] Confirm gluetun-speedtest switches to a server (log: `switchServer: container started → Aladfar`)
 - [ ] Confirm speedtest-runner restarted (log: `switchServer: speedtest-runner restarted`)
@@ -99,7 +106,7 @@ Deploying directly from the local clone so the `.env` file is picked up automati
 - [ ] Confirm qBittorrent resumed (log: `[qBittorrent] torrents resumed`)
 
 ### Second Manual Test Run
-- [ ] Run `npm run test:single` again
+- [ ] Run `sudo docker exec orchestrator npm run test:single` again
 - [ ] Confirm queue builder picks a different server/tier than run 1
 - [ ] Confirm `results.json` has two servers' worth of data
 - [ ] Open `report/index.html` in browser pointed at volume mount — confirm bar chart renders

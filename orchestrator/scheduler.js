@@ -2,8 +2,8 @@ const cron = require('node-cron');
 const logger = require('./logger');
 const config = require('./config');
 const { fetchUSServers, classifyTier } = require('./airvpnStatus');
-const { buildQueue } = require('./queueBuilder');
-const { switchServer, waitForTunnel, stopGluetun } = require('./gluetunManager');
+const { pickNextServer } = require('./queueBuilder');
+const { switchServer, stopGluetun } = require('./gluetunManager');
 const { runSpeedtest } = require('./speedTester');
 const { writeResults, loadResults, commitResults, ensureGitRepo } = require('./resultsWriter');
 const { recalculateAll, calculateAverages } = require('./aggregator');
@@ -27,20 +27,25 @@ async function runSpeedTestWindow() {
     logger.warn(`PRE-FLIGHT: qBittorrent pause failed — continuing anyway (${err.message})`);
   }
 
-  logger.info('PRE-FLIGHT: fetching live AirVPN server list...');
-  const liveServers = await fetchUSServers();
-
   logger.info('PRE-FLIGHT: loading existing results...');
   let results = await loadResults();
-
-  logger.info('PRE-FLIGHT: building test queue...');
-  const queue = buildQueue(liveServers, results);
-  logger.info(`PRE-FLIGHT: complete — ${queue.length} servers queued`);
+  logger.info('PRE-FLIGHT: complete');
 
   // ── Step 2: Per-server test session loop ──────────────────────
   const serversTestedThisWindow = [];
 
-  for (const server of queue) {
+  while (Date.now() < windowEnd.getTime()) {
+    logger.info('Fetching live AirVPN status...');
+    const liveServers = await fetchUSServers();
+
+    results = await loadResults();
+    const server = pickNextServer(liveServers, results);
+
+    if (!server) {
+      logger.info('No eligible servers — coverage complete, ending window early');
+      break;
+    }
+
     if (Date.now() >= windowEnd.getTime()) {
       logger.info('Window boundary reached — stopping before next session');
       break;
@@ -54,9 +59,6 @@ async function runSpeedTestWindow() {
     try {
       logger.info(`SESSION: switching gluetun to ${serverName}...`);
       await switchServer(serverName);
-
-      logger.info('SESSION: waiting for tunnel...');
-      await waitForTunnel();
 
       logger.info('SESSION: re-fetching status for session-start snapshot...');
       const freshServers = await fetchUSServers();

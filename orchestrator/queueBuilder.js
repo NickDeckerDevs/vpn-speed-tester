@@ -1,7 +1,7 @@
 const logger = require('./logger');
 
-function buildQueue(liveServers, results) {
-  logger.fn(__filename, 'buildQueue', {
+function pickNextServer(liveServers, results) {
+  logger.fn(__filename, 'pickNextServer', {
     liveServerCount: liveServers.length,
     resultsServerCount: Object.keys(results).length,
   });
@@ -43,34 +43,30 @@ function buildQueue(liveServers, results) {
 
   const anyMissingCoverage = scored.some(s => !s.hasTierCoverage);
 
+  if (!anyMissingCoverage) {
+    logger.info('pickNextServer: all servers have current-tier coverage — coverage complete');
+    return null;
+  }
+
   const allDownloads = scored.map(s => s.avgDownload).filter(d => d != null);
   const globalMean = allDownloads.length > 0
     ? allDownloads.reduce((a, b) => a + b, 0) / allDownloads.length
     : 0;
 
-  logger.info(`buildQueue: anyMissingCoverage=${anyMissingCoverage}, globalMeanDownload=${globalMean.toFixed(1)} Mbps`);
+  logger.info(`pickNextServer: anyMissingCoverage=true, globalMeanDownload=${globalMean.toFixed(1)} Mbps`);
 
   scored.sort((a, b) => {
-    if (anyMissingCoverage) {
-      if (!a.hasTierCoverage && b.hasTierCoverage) return -1;
-      if (a.hasTierCoverage && !b.hasTierCoverage) return 1;
-    } else {
-      const devA = a.avgDownload != null ? Math.abs(a.avgDownload - globalMean) : 0;
-      const devB = b.avgDownload != null ? Math.abs(b.avgDownload - globalMean) : 0;
-      if (devA !== devB) return devB - devA;
-    }
+    if (!a.hasTierCoverage && b.hasTierCoverage) return -1;
+    if (a.hasTierCoverage && !b.hasTierCoverage) return 1;
 
     if (a.totalSessions !== b.totalSessions) return a.totalSessions - b.totalSessions;
 
     return a.lastSessionEnd - b.lastSessionEnd;
   });
 
-  const queue = scored.map(s => s.server);
-
-  const preview = queue.slice(0, 5).map(s => `${s.public_name}(${s.tier})`).join(', ');
-  logger.info(`buildQueue: queue of ${queue.length} — top 5: ${preview}`);
-
-  return queue;
+  const best = scored[0].server;
+  logger.info(`pickNextServer: selected ${best.public_name} (tier: ${best.tier}, load: ${best.currentload}%)`);
+  return best;
 }
 
-module.exports = { buildQueue };
+module.exports = { pickNextServer };

@@ -8,48 +8,76 @@ const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 async function switchServer(serverName) {
   logger.fn(__filename, 'switchServer', { serverName });
 
-  const container = docker.getContainer(config.GLUETUN_CONTAINER);
+  // ── Step 1: Tear down speedtest-runner first ──────────────────
+  // Must stop/remove so Docker can re-resolve network_mode to the new gluetun container ID.
+  // A restart() reuses the stale container ID baked in at creation time and always fails.
+  const speedtestC = docker.getContainer(config.SPEEDTEST_CONTAINER);
+  let speedtestInfo = null;
+  try {
+    speedtestInfo = await speedtestC.inspect();
+  } catch (err) {
+    if (err.statusCode !== 404) throw err;
+    logger.debug('switchServer: speedtest-runner not found, skipping teardown');
+  }
 
-  logger.info(`switchServer: inspecting ${config.GLUETUN_CONTAINER}...`);
-  const info = await container.inspect();
+  if (speedtestInfo) {
+    logger.info(`switchServer: stopping ${config.SPEEDTEST_CONTAINER}...`);
+    try {
+      await speedtestC.stop({ t: 10 });
+    } catch (err) {
+      if (err.statusCode !== 304 && err.statusCode !== 409) throw err;
+    }
+    logger.info(`switchServer: removing ${config.SPEEDTEST_CONTAINER}...`);
+    await speedtestC.remove();
+    logger.info('switchServer: speedtest-runner removed');
+  }
 
-  const newEnv = (info.Config.Env || [])
+  // ── Step 2: Tear down gluetun-speedtest ───────────────────────
+  const gluetunC = docker.getContainer(config.GLUETUN_CONTAINER);
+  logger.info(`switchServer: stopping ${config.GLUETUN_CONTAINER}...`);
+  const gluetunInfo = await gluetunC.inspect();
+
+  const newEnv = (gluetunInfo.Config.Env || [])
     .filter(e => !e.startsWith('SERVER_NAMES='))
     .concat(`SERVER_NAMES=${serverName}`);
 
-  logger.info(`switchServer: stopping ${config.GLUETUN_CONTAINER}...`);
   try {
-    await container.stop({ t: 10 });
-    logger.info('switchServer: container stopped');
+    await gluetunC.stop({ t: 10 });
   } catch (err) {
-    if (err.statusCode === 304 || err.statusCode === 409) {
-      logger.debug('switchServer: container was already stopped');
-    } else {
-      throw err;
-    }
+    if (err.statusCode !== 304 && err.statusCode !== 409) throw err;
   }
+  logger.info(`switchServer: removing ${config.GLUETUN_CONTAINER}...`);
+  await gluetunC.remove();
+  logger.info('switchServer: gluetun-speedtest removed');
 
-  logger.info('switchServer: removing old container...');
-  await container.remove();
-  logger.info('switchServer: container removed');
-
-  logger.info(`switchServer: creating new container with SERVER_NAMES=${serverName}...`);
-  const newContainer = await docker.createContainer({
+  // ── Step 3: Create + start new gluetun-speedtest ─────────────
+  logger.info(`switchServer: creating new gluetun-speedtest → ${serverName}...`);
+  const newGluetun = await docker.createContainer({
     name: config.GLUETUN_CONTAINER,
-    Image: info.Config.Image,
+    Image: gluetunInfo.Config.Image,
     Env: newEnv,
-    ExposedPorts: info.Config.ExposedPorts,
-    HostConfig: info.HostConfig,
+    ExposedPorts: gluetunInfo.Config.ExposedPorts,
+    HostConfig: gluetunInfo.HostConfig,
   });
-
-  await newContainer.start();
+  await newGluetun.start();
   logger.info(`switchServer: container started → ${serverName}`);
 
-  logger.info('switchServer: restarting speedtest-runner to attach to new gluetun namespace...');
-  const speedtestContainer = docker.getContainer(config.SPEEDTEST_CONTAINER);
-  await speedtestContainer.restart();
-  logger.info('switchServer: speedtest-runner restarted');
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  // ── Step 4: Wait for tunnel before attaching speedtest-runner ─
+  await waitForTunnel();
+
+  // ── Step 5: Recreate speedtest-runner (fresh namespace resolution) ─
+  if (speedtestInfo) {
+    logger.info('switchServer: creating new speedtest-runner...');
+    const newSpeedtest = await docker.createContainer({
+      name: config.SPEEDTEST_CONTAINER,
+      Image: speedtestInfo.Config.Image,
+      Env: speedtestInfo.Config.Env,
+      ExposedPorts: speedtestInfo.Config.ExposedPorts,
+      HostConfig: speedtestInfo.HostConfig,
+    });
+    await newSpeedtest.start();
+    logger.info('switchServer: speedtest-runner ready');
+  }
 }
 
 async function waitForTunnel() {
