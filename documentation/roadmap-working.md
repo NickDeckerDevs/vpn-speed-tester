@@ -76,10 +76,10 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
 - [ ] Create required data directories on the NAS (one-time, Volume 2 — separate from repo on Volume 1):
   ```bash
   ssh nas
-  mkdir -p /volume2/data/vpn-speed-tests/snapshots
-  mkdir -p /volume2/data/vpn-speed-tests/report
-  mkdir -p /volume2/data/vpn-speed-tests/logs
-  cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
+  mkdir -p /volume1/Docker/vpn-speed-tester/data/snapshots
+  mkdir -p /volume1/Docker/vpn-speed-tester/data/report
+  mkdir -p /volume1/Docker/vpn-speed-tester/data/logs
+  cp /volume1/Docker/vpn-speed-tester/report/index.html /volume1/Docker/vpn-speed-tester/data/report/index.html
   ```
 - [ ] SSH into the NAS and bring the stack up:
   ```bash
@@ -101,8 +101,8 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
 - [ ] Confirm speedtest-runner restarted (log: `switchServer: speedtest-runner restarted`)
 - [ ] Confirm tunnel comes up (log: `waitForTunnel: tunnel confirmed after N attempt(s)`)
 - [ ] Confirm 3 speed test runs complete with Mbps values logged
-- [ ] Confirm `results.json` written: `ls -lh /volume2/data/vpn-speed-tests/results.json`
-- [ ] Confirm git commit: `cd /volume2/data/vpn-speed-tests && git log --oneline`
+- [ ] Confirm `results.json` written: `ls -lh /volume1/Docker/vpn-speed-tester/data/results.json`
+- [ ] Confirm git commit: `cd /volume1/Docker/vpn-speed-tester/data && git log --oneline`
 - [ ] Confirm qBittorrent resumed (log: `[qBittorrent] torrents resumed`)
 
 ### Second Manual Test Run
@@ -113,7 +113,7 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
 
 ### Snapshot Verification
 - [ ] Wait for the hourly cron to fire (or restart orchestrator near the top of the hour)
-- [ ] Confirm snapshot file: `ls /volume2/data/vpn-speed-tests/snapshots/`
+- [ ] Confirm snapshot file: `ls /volume1/Docker/vpn-speed-tester/data/snapshots/`
 - [ ] Confirm `snapshots/index.json` exists and lists the snapshot file
 - [ ] Confirm report Tab 2 (Hourly Snapshots) loads and renders the heatmap
 
@@ -128,7 +128,7 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
   - `[INFO ] cron registered: speed test window at hour 3`
   - `[INFO ] cron registered: hourly snapshot`
 - [ ] Let the 3 AM cron run unattended — review logs the next morning
-- [ ] Check: `grep -E "\[ERROR\]|\[WARN\]" /volume2/data/vpn-speed-tests/logs/$(date +%F).log`
+- [ ] Check: `grep -E "\[ERROR\]|\[WARN\]" /volume1/Docker/vpn-speed-tester/data/logs/$(date +%F).log`
 - [ ] After 3–5 nights: review tier coverage across servers (check report bar chart)
 - [ ] After 1 week: decide if `TEST_WINDOW_HOURS` needs to increase to cover more servers per night
 

@@ -57,7 +57,7 @@ Every run is written immediately after it completes (no buffering). To prevent c
 Static HTML cannot list directory contents via `fetch()`. `snapshotWriter.js` maintains `snapshots/index.json` — an ordered array of snapshot filenames — updated after every write. The report fetches this index first, then loads individual files in parallel.
 
 ### Container Path Convention
-`config.js` uses `/data/` paths, not the raw NAS volume paths. Volume 2 (`/volume2/data/vpn-speed-tests`) is mounted into the orchestrator container at `/data/`. This keeps the config values clean and the logic portable.
+`config.js` uses `/data/` paths, not the raw NAS volume paths. Volume 2 (`/volume1/Docker/vpn-speed-tester/data`) is mounted into the orchestrator container at `/data/`. This keeps the config values clean and the logic portable.
 
 ### qBittorrent Lifecycle
 qBittorrent is paused as the **absolute first action** before any Docker or test activity, and resumed as the **absolute last action** after gluetun-test is stopped. It stays paused for the entire test window — even between server switches — to prevent torrent bandwidth from contaminating speed measurements.
@@ -74,7 +74,7 @@ Results are committed per-session (`data: {server} {tier} session NNN — 3 runs
   gluetun-test/                      ← gluetun config volume
   orchestrator/                      ← state, logs
 
-/volume2/data/vpn-speed-tests/       ← HDD (all data)
+/volume1/Docker/vpn-speed-tester/data/       ← HDD (all data)
   results.json                       ← live speed test results
   snapshots/
     index.json                       ← manifest for report

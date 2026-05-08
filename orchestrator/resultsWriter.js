@@ -29,7 +29,20 @@ async function writeResults(data) {
   );
   await fs.writeJson(tmpPath, data, { spaces: 2 });
   await fs.move(tmpPath, config.RESULTS_PATH, { overwrite: true });
-  logger.info(`writeResults: wrote ${Object.keys(data).length} servers to ${config.RESULTS_PATH}`);
+
+  // Log the first server's data shape for debugging
+  const firstServerName = Object.keys(data)[0];
+  const firstServer = data[firstServerName];
+  let summary = `wrote ${Object.keys(data).length} servers`;
+  if (firstServer && Object.keys(firstServer.tiers).some(t => firstServer.tiers[t].length > 0)) {
+    const tier = Object.keys(firstServer.tiers).find(t => firstServer.tiers[t].length > 0);
+    const latestSession = firstServer.tiers[tier][firstServer.tiers[tier].length - 1];
+    if (latestSession && latestSession.runs && latestSession.runs.length > 0) {
+      const latestRun = latestSession.runs[latestSession.runs.length - 1];
+      summary += ` | ${firstServerName} ${tier} runs=${latestSession.runs.length} ↓${latestRun.download_mbps ?? 'null'} Mbps ↑${latestRun.upload_mbps ?? 'null'} Mbps`;
+    }
+  }
+  logger.info(`writeResults: ${summary} to ${config.RESULTS_PATH}`);
 }
 
 async function loadResults() {

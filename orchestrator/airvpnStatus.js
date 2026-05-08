@@ -4,30 +4,37 @@ const httpClient = require('./httpClient');
 const config = require('./config');
 
 const CITY_COORDS = {
-  'Miami':             { latitude: 25.7617, longitude: -80.1918 },
-  'Atlanta':           { latitude: 33.7490, longitude: -84.3880 },
-  'Atlanta, Georgia':  { latitude: 33.7490, longitude: -84.3880 },
-  'New York':          { latitude: 40.7128, longitude: -74.0060 },
-  'Los Angeles':       { latitude: 34.0522, longitude: -118.2437 },
-  'Chicago':           { latitude: 41.8781, longitude: -87.6298 },
-  'Dallas':            { latitude: 32.7767, longitude: -96.7970 },
-  'Seattle':           { latitude: 47.6062, longitude: -122.3321 },
-  'San Jose':          { latitude: 37.3382, longitude: -121.8863 },
-  'Phoenix':           { latitude: 33.4484, longitude: -112.0740 },
-  'Denver':            { latitude: 39.7392, longitude: -104.9903 },
-  'Minneapolis':       { latitude: 44.9778, longitude: -93.2650 },
-  'Portland':          { latitude: 45.5051, longitude: -122.6750 },
-  'Charlotte':         { latitude: 35.2271, longitude: -80.8431 },
-  'Washington':        { latitude: 38.9072, longitude: -77.0369 },
-  'Boston':            { latitude: 42.3601, longitude: -71.0589 },
-  'Las Vegas':         { latitude: 36.1699, longitude: -115.1398 },
-  'Salt Lake City':    { latitude: 40.7608, longitude: -111.8910 },
-  'Kansas City':       { latitude: 39.0997, longitude: -94.5786 },
-  'Tampa':             { latitude: 27.9506, longitude: -82.4572 },
+  'Miami':               { latitude: 25.7617, longitude: -80.1918 },
+  'Atlanta':             { latitude: 33.7490, longitude: -84.3880 },
+  'Atlanta, Georgia':    { latitude: 33.7490, longitude: -84.3880 },
+  'New York':            { latitude: 40.7128, longitude: -74.0060 },
+  'New York City':       { latitude: 40.7128, longitude: -74.0060 },
+  'Los Angeles':         { latitude: 34.0522, longitude: -118.2437 },
+  'Chicago':             { latitude: 41.8781, longitude: -87.6298 },
+  'Chicago, Illinois':   { latitude: 41.8781, longitude: -87.6298 },
+  'Dallas':              { latitude: 32.7767, longitude: -96.7970 },
+  'Dallas, Texas':       { latitude: 32.7767, longitude: -96.7970 },
+  'Seattle':             { latitude: 47.6062, longitude: -122.3321 },
+  'San Jose':            { latitude: 37.3382, longitude: -121.8863 },
+  'San Jose, California':{ latitude: 37.3382, longitude: -121.8863 },
+  'Fremont, California': { latitude: 37.5485, longitude: -121.9886 },
+  'Phoenix':             { latitude: 33.4484, longitude: -112.0740 },
+  'Phoenix, Arizona':    { latitude: 33.4484, longitude: -112.0740 },
+  'Denver':              { latitude: 39.7392, longitude: -104.9903 },
+  'Denver, Colorado':    { latitude: 39.7392, longitude: -104.9903 },
+  'Raleigh, North Carolina': { latitude: 35.7796, longitude: -78.6382 },
+  'Minneapolis':         { latitude: 44.9778, longitude: -93.2650 },
+  'Portland':            { latitude: 45.5051, longitude: -122.6750 },
+  'Charlotte':           { latitude: 35.2271, longitude: -80.8431 },
+  'Washington':          { latitude: 38.9072, longitude: -77.0369 },
+  'Boston':              { latitude: 42.3601, longitude: -71.0589 },
+  'Las Vegas':           { latitude: 36.1699, longitude: -115.1398 },
+  'Salt Lake City':      { latitude: 40.7608, longitude: -111.8910 },
+  'Kansas City':         { latitude: 39.0997, longitude: -94.5786 },
+  'Tampa':               { latitude: 27.9506, longitude: -82.4572 },
 };
 
 function classifyTier(currentload) {
-  logger.fn(__filename, 'classifyTier', { currentload });
   const t = config.TIER_THRESHOLDS;
   if (currentload <= t.low.max)    return 'low';
   if (currentload <= t.medium.max) return 'medium';

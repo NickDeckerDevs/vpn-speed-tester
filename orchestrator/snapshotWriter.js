@@ -4,6 +4,7 @@ const simpleGit = require('simple-git');
 const { fetchUSServers } = require('./airvpnStatus');
 const logger = require('./logger');
 const config = require('./config');
+const { ensureGitRepo } = require('./resultsWriter');
 
 const git = simpleGit(config.GIT_REPO_PATH);
 
@@ -28,6 +29,7 @@ async function updateSnapshotIndex(filename) {
 async function writeHourlySnapshot() {
   logger.fn(__filename, 'writeHourlySnapshot', null);
 
+  await ensureGitRepo();
   const now = new Date();
   const servers = await fetchUSServers();
 

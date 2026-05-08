@@ -73,10 +73,37 @@ async function switchServer(serverName) {
       Image: speedtestInfo.Config.Image,
       Env: speedtestInfo.Config.Env,
       ExposedPorts: speedtestInfo.Config.ExposedPorts,
-      HostConfig: speedtestInfo.HostConfig,
+      Entrypoint: [],
+      Cmd: ['sleep', 'infinity'],
+      HostConfig: {
+        ...speedtestInfo.HostConfig,
+        NetworkMode: `container:${newGluetun.id}`,
+      },
     });
     await newSpeedtest.start();
-    logger.info('switchServer: speedtest-runner ready');
+
+    // Wait for speedtest-runner to be running (max 30s)
+    const deadline = Date.now() + 30000;
+    let attempt = 0;
+    while (Date.now() < deadline) {
+      attempt++;
+      try {
+        const info = await newSpeedtest.inspect();
+        if (info.State.Running) {
+          logger.info('switchServer: speedtest-runner ready');
+          break;
+        }
+        if (info.State.Status === 'exited' || info.State.Status === 'dead') {
+          throw new Error(`speedtest-runner container failed to start (status: ${info.State.Status})`);
+        }
+      } catch (err) {
+        if (attempt >= 10) throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (Date.now() >= deadline) {
+      throw new Error('speedtest-runner startup timeout after 30s');
+    }
   }
 }
 

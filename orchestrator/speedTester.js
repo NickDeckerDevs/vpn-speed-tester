@@ -20,21 +20,41 @@ async function runSpeedtest() {
   const { stdout, stderr } = await new Promise((resolve, reject) => {
     let out = '';
     let err = '';
+    const timeout = setTimeout(() => {
+      reject(new Error('speedtest-cli timeout after 600s'));
+    }, 600000);
     container.modem.demuxStream(
       stream,
       { write: chunk => { out += chunk.toString(); } },
       { write: chunk => { err += chunk.toString(); } }
     );
-    stream.on('end', () => resolve({ stdout: out, stderr: err }));
-    stream.on('error', reject);
+    stream.on('end', () => {
+      clearTimeout(timeout);
+      resolve({ stdout: out, stderr: err });
+    });
+    stream.on('error', err => {
+      clearTimeout(timeout);
+      reject(err);
+    });
   });
 
   const inspected = await exec.inspect();
-  if (inspected.ExitCode !== 0) {
+  if (inspected.ExitCode === 137) {
+    logger.warn('runSpeedtest: speedtest-cli was killed (exit 137) — likely during container teardown');
+  } else if (inspected.ExitCode !== 0) {
     throw new Error(`speedtest-cli exited ${inspected.ExitCode} — stderr: ${stderr.trim()}`);
   }
 
-  const data = JSON.parse(stdout.trim());
+  let data;
+  try {
+    data = JSON.parse(stdout.trim());
+  } catch (err) {
+    if (inspected.ExitCode === 137) {
+      logger.warn('runSpeedtest: incomplete JSON output due to kill signal — skipping partial result');
+      throw new Error('speedtest-cli killed before output was complete');
+    }
+    throw err;
+  }
   const parsed = {
     download_mbps: parseFloat((data.download / 1_000_000).toFixed(2)),
     upload_mbps:   parseFloat((data.upload   / 1_000_000).toFixed(2)),

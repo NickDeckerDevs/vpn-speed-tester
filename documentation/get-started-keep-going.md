@@ -4,6 +4,108 @@ Operational guide for the VPN speed tester stack. Covers first-time setup, enabl
 
 ---
 
+## HOW TO TEST
+
+> **Assumes:** repo is on your Mac, `.env` is filled in, NAS is reachable at `10.1.10.254:8322`.
+
+### Step 1 — Deploy code to the NAS
+
+```bash
+cd ~/repos/vpn-speed-tester
+./deploy.sh
+```
+
+**What happens:** `deploy.sh` validates that every `.env` variable is present and not a placeholder, then `rsync`s the whole repo to `/volume1/Docker/vpn-speed-tester/` on the NAS over SSH, then runs `docker compose down` + `docker rm -f` to tear down any existing containers. It polls until they're gone, then exits. It does **not** start the stack — that's the next step.
+
+---
+
+### Step 2 — SSH to the NAS and start the stack
+
+```bash
+ssh -p 8322 sysop@10.1.10.254
+```
+
+Then on the NAS:
+
+```bash
+cd /volume1/Docker/vpn-speed-tester
+sudo docker compose up -d --build
+```
+
+**What happens:** Docker builds the image (`node:20-slim` + Python 3 + `speedtest-cli`) and starts three containers:
+
+- **`orchestrator`** — this is the brain. It runs `node main.js` and is what actually controls everything. In normal (non-manual) mode it registers cron jobs and waits. This is the reason we run `docker compose up`.
+- **`gluetun-speedtest`** — starts a WireGuard VPN tunnel using your credentials from `.env`. It defaults to the server `Aladfar` because the compose file has `SERVER_NAMES=${SERVER_NAMES:-Aladfar}`. **This connection is immediately discarded** the moment a test run starts — the orchestrator always tears gluetun down and recreates it with a freshly chosen server. The initial Aladfar connection exists only because gluetun needs *some* server on startup.
+- **`speedtest-runner`** — waits for gluetun's health check, then starts. Its only job is to have `speedtest-cli` available inside the VPN tunnel.
+
+First build takes ~30–60 seconds. Confirm all three show `Up`:
+
+```bash
+sudo docker ps
+```
+
+`gluetun-speedtest` shows `(healthy)` after ~45 seconds once the WireGuard tunnel is established.
+
+---
+
+### Step 3 — Trigger a manual test
+
+```bash
+sudo docker exec orchestrator npm run test:single
+```
+
+**What happens:** Runs `node main.js --manual` inside the orchestrator. The `--manual` flag skips the cron and immediately calls `runSpeedTestWindow()`. Here is the exact sequence:
+
+1. **Pause torrents** — logs into qBittorrent WebUI, records which torrents are actively downloading (by hash), sends stop-all. Polls until all torrents confirm stopped.
+
+2. **Pick a server** — fetches live AirVPN status, filters to US servers with `health === 'ok'`, classifies each by load tier (`low` 0–30%, `medium` 31–50%, `high` 51–70%, `diablo` 71–100%`), then scores every server against existing results to find the one with the least coverage.
+
+3. **Switch the tunnel** — stops and removes both `speedtest-runner` and `gluetun-speedtest`. Recreates `gluetun-speedtest` with `SERVER_NAMES=<chosen server>` injected. Waits up to 60 seconds for the tunnel to report `{"status":"running"}`. Recreates `speedtest-runner` linked to the new gluetun container's network namespace.
+
+4. **Run 3 speed tests (strictly sequential, no overlap)**:
+   - Run 1 fires → completes → results parsed → written to disk
+   - 15 second wait
+   - Run 2 fires → completes → results parsed → written to disk
+   - 15 second wait
+   - Run 3 fires → completes → results parsed → written to disk
+   
+   Each `speedtest-cli --json --secure` runs inside `speedtest-runner` (inside the VPN tunnel) via `docker exec`. One at a time, always.
+
+5. **Commit results** — averages the 3 runs, writes to `/data/results.json`, runs `git add + git commit`.
+
+6. **Resume torrents** — restores all previously-downloading torrents by hash.
+
+Watch live from a second terminal:
+
+```bash
+sudo docker logs -f orchestrator
+```
+
+Lines to confirm a successful run:
+```
+[qBittorrent] all torrents paused
+switchServer: container started → <ServerName>
+waitForTunnel: tunnel confirmed after N attempt(s)
+[SpeedTest] run 1/3 — download: XX.X Mbps
+[SpeedTest] run 2/3 — download: XX.X Mbps
+[SpeedTest] run 3/3 — download: XX.X Mbps
+[Results] results.json written
+[qBittorrent] torrents resumed
+```
+
+---
+
+### Step 4 — Verify results on disk
+
+```bash
+ls -lh /volume1/Docker/vpn-speed-tester/data/results.json
+cd /volume1/Docker/vpn-speed-tester/data && git log --oneline
+```
+
+Each successful session produces a git commit. If the log shows a recent commit, the run succeeded.
+
+---
+
 ## Table of Contents
 
 1. [Getting Started — First Time](#getting-started--first-time)
@@ -102,10 +204,10 @@ Done. To bring the stack up: SSH to NAS → sudo docker compose up -d --build
 SSH into the NAS and run:
 
 ```bash
-mkdir -p /volume2/data/vpn-speed-tests/snapshots
-mkdir -p /volume2/data/vpn-speed-tests/report
-mkdir -p /volume2/data/vpn-speed-tests/logs
-cp /volume1/Docker/vpn-speed-tester/report/index.html /volume2/data/vpn-speed-tests/report/index.html
+mkdir -p /volume1/Docker/vpn-speed-tester/data/snapshots
+mkdir -p /volume1/Docker/vpn-speed-tester/data/report
+mkdir -p /volume1/Docker/vpn-speed-tester/data/logs
+cp /volume1/Docker/vpn-speed-tester/report/index.html /volume1/Docker/vpn-speed-tester/data/report/index.html
 ```
 
 ---
@@ -159,8 +261,8 @@ What to confirm in the logs:
 Verify the data file:
 
 ```bash
-ls -lh /volume2/data/vpn-speed-tests/results.json
-cd /volume2/data/vpn-speed-tests && git log --oneline
+ls -lh /volume1/Docker/vpn-speed-tester/data/results.json
+cd /volume1/Docker/vpn-speed-tester/data && git log --oneline
 ```
 
 ---
@@ -182,8 +284,8 @@ Confirm `results.json` has two servers' worth of data, then open `report/index.h
 Wait for the hourly cron to fire (or restart the orchestrator near the top of the hour), then:
 
 ```bash
-ls /volume2/data/vpn-speed-tests/snapshots/
-cat /volume2/data/vpn-speed-tests/snapshots/index.json
+ls /volume1/Docker/vpn-speed-tester/data/snapshots/
+cat /volume1/Docker/vpn-speed-tester/data/snapshots/index.json
 ```
 
 Confirm `index.json` lists the snapshot file, and that report Tab 2 (Hourly Snapshots) renders the heatmap.
@@ -293,8 +395,8 @@ sudo docker logs -f orchestrator
 #### 3. Read today's log file
 
 ```bash
-cat /volume2/data/vpn-speed-tests/logs/$(date +%F).log
-grep -E "\[ERROR\]|\[WARN\]" /volume2/data/vpn-speed-tests/logs/$(date +%F).log
+cat /volume1/Docker/vpn-speed-tester/data/logs/$(date +%F).log
+grep -E "\[ERROR\]|\[WARN\]" /volume1/Docker/vpn-speed-tester/data/logs/$(date +%F).log
 ```
 
 #### 4. Common error patterns
@@ -315,7 +417,7 @@ grep -E "\[ERROR\]|\[WARN\]" /volume2/data/vpn-speed-tests/logs/$(date +%F).log
 #### 5. Check data integrity
 
 ```bash
-cd /volume2/data/vpn-speed-tests
+cd /volume1/Docker/vpn-speed-tester/data
 git log --oneline
 ```
 

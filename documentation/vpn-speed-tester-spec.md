@@ -110,7 +110,7 @@ Two entirely separate stacks. The production media stack is **never touched** du
   orchestrator/                          ← state file, logs
   gluetun-test/                          ← test gluetun config
 
-/volume2/data/vpn-speed-tests/           ← all results on HDD
+/volume1/Docker/vpn-speed-tester/data/           ← all results on HDD
   results.json                           ← main speed test results
   snapshots/                             ← hourly status snapshots
     YYYY-MM-DD-HH.json                   ← one file per hour
@@ -439,7 +439,7 @@ orchestrator/
   speedTester.js           ← shell out to speedtest-cli via child_process, parse JSON output
   resultsWriter.js         ← atomic writes to results.json, git commit wrapper via simple-git
   aggregator.js            ← recalculate all session averages across results.json
-  snapshotWriter.js        ← write hourly snapshots to /volume2/data/vpn-speed-tests/snapshots/
+  snapshotWriter.js        ← write hourly snapshots to /volume1/Docker/vpn-speed-tester/data/snapshots/
   qbtClient.js             ← qBittorrent pause / resume via axios POST
   config.js                ← all configurable values (paths, URLs, thresholds, schedule)
   package.json             ← npm dependencies
@@ -639,7 +639,7 @@ services:
       gluetun-speedtest:
         condition: service_healthy
     volumes:
-      - /volume2/data/vpn-speed-tests:/data
+      - /volume1/Docker/vpn-speed-tester/data:/data
     restart: unless-stopped
 
   orchestrator:
@@ -650,7 +650,7 @@ services:
     env_file: .env
     volumes:
       - /volume1/Docker/vpn-speed-tester/orchestrator:/config
-      - /volume2/data/vpn-speed-tests:/data
+      - /volume1/Docker/vpn-speed-tester/data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=America/New_York
@@ -709,7 +709,7 @@ WIREGUARD_PRESHARED_KEY=<your-airvpn-wireguard-preshared-key>
 
 ### 9.1 Behavior
 
-- Single `index.html` file served from `/volume2/data/vpn-speed-tests/report/`
+- Single `index.html` file served from `/volume1/Docker/vpn-speed-tester/data/report/`
 - On every page load, fetches `../results.json` and `../snapshots/` via `fetch()` — no caching
 - Two tabs in the same file:
   - **Tab 1 — Speed Test Results:** per-server comparisons, tier breakdowns, drill-down to individual runs
@@ -746,7 +746,7 @@ The JSON schema does not change when migrating. The Express server reads the sam
 ### 10.1 Repository Layout
 
 ```
-/volume2/data/vpn-speed-tests/git/
+/volume1/Docker/vpn-speed-tester/data/git/
   results.json          ← tracked
   snapshots/            ← tracked (all hourly files)
   report/index.html     ← tracked

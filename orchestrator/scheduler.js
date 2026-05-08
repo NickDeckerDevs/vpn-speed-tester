@@ -33,6 +33,8 @@ async function runSpeedTestWindow() {
 
   // ── Step 2: Per-server test session loop ──────────────────────
   const serversTestedThisWindow = [];
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 2;
 
   while (Date.now() < windowEnd.getTime()) {
     logger.info('Fetching live AirVPN status...');
@@ -127,7 +129,7 @@ async function runSpeedTestWindow() {
         };
         logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: server load now ${runServer.currentload}% — running speedtest...`);
 
-        const speedResult = runSpeedtest();
+        const speedResult = await runSpeedtest();
 
         const run = {
           run: runNum,
@@ -179,9 +181,22 @@ async function runSpeedTestWindow() {
 
       serversTestedThisWindow.push({ serverName, tier: sessionTier });
       logger.info(`SESSION: ${serverName} complete ✓`);
+      consecutiveFailures = 0;
 
     } catch (err) {
+      consecutiveFailures++;
+      const isNamespaceError = err.statusCode === 500 && err.message?.includes('network namespace');
+      const isFatal = isNamespaceError || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+
       logger.error(`SESSION ERROR [${serverName}]: ${err.message}`);
+
+      if (isFatal) {
+        const reason = isNamespaceError
+          ? 'Docker network namespace error'
+          : `${MAX_CONSECUTIVE_FAILURES} consecutive failures`;
+        logger.error(`FATAL: ${reason} — stopping session window`);
+        break;
+      }
     }
   }
 
@@ -218,10 +233,11 @@ function start() {
   });
   logger.info(`start: speed test cron registered — "${speedSchedule}" (${config.TEST_START_HOUR}:00 AM daily)`);
 
-  cron.schedule('0 * * * *', () => {
+  cron.schedule('30 * * * *', () => {
+    logger.info('Hourly snapshot cron firing...');
     writeHourlySnapshot().catch(err => logger.error(`Hourly snapshot error: ${err.message}`));
   });
-  logger.info('start: snapshot cron registered — "0 * * * *" (every hour on the hour)');
+  logger.info('start: snapshot cron registered — "30 * * * *" (every hour at :30 past)');
 }
 
 module.exports = { start, runSpeedTestWindow };

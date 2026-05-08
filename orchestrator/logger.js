@@ -3,6 +3,8 @@ const fs = require('fs-extra');
 const config = require('./config');
 
 const LEVELS = { INFO: 'INFO ', WARN: 'WARN ', ERROR: 'ERROR', DEBUG: 'DEBUG' };
+const LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 };
+const minLevel = LEVEL_ORDER[(process.env.LOG_LEVEL || 'info').toLowerCase()] ?? 1;
 
 function timestamp() {
   return new Date().toISOString();
@@ -20,6 +22,7 @@ function writeToFile(line) {
 }
 
 function log(level, message) {
+  if (LEVEL_ORDER[level.toLowerCase()] < minLevel) return;
   const line = `[${timestamp()}] [${LEVELS[level]}] ${message}\n`;
   process.stdout.write(line);
   writeToFile(line);

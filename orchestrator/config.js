@@ -8,10 +8,10 @@ module.exports = {
   QBT_BASE_URL:         process.env.QBT_BASE_URL,
   QBT_USERNAME:         process.env.QBT_USERNAME || 'admin',
   QBT_PASSWORD:         process.env.QBT_PASSWORD,
+  GLUETUN_CONTAINER:    'gluetun-speedtest',
   RESULTS_PATH:         '/data/results.json',
   SNAPSHOTS_PATH:       '/data/snapshots/',
   GIT_REPO_PATH:        '/data/',
-  GLUETUN_CONTAINER:    'gluetun-speedtest',
   LOGS_PATH:            '/data/logs/',
 
   CAPE_CORAL_LAT:       26.5629,
