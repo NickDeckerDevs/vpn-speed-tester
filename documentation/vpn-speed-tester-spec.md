@@ -99,9 +99,9 @@ Two entirely separate stacks. The production media stack is **never touched** du
 
 | Service | Image | Role | Network |
 |---------|-------|------|---------|
-| `gluetun-speedtest` | `qmcgaw/gluetun:v3.41.1` | Isolated VPN gateway for testing only | `vpn-test` (172.21.0.0/24) |
-| `speedtest-runner` | Custom image (`node:20-slim` + `speedtest-cli`) | Runs `speedtest-cli` via dockerode `exec` — shares gluetun-speedtest's network namespace so all traffic is tunneled | `vpn-test` via `gluetun-speedtest` |
-| `orchestrator` | Custom image (`node:20-slim`) | Coordinates full test lifecycle — pure Node.js | `vpn-test` + Docker socket access |
+| `gluetun-speedtest` | `qmcgaw/gluetun:v3.41.1` | Isolated VPN gateway for testing only | `vpn-speedtest` (172.21.0.0/24) |
+| `speedtest-runner` | Custom image (`node:20-slim` + `speedtest-cli`) | Runs `speedtest-cli` via dockerode `exec` — shares gluetun-speedtest's network namespace so all traffic is tunneled | `vpn-speedtest` via `gluetun-speedtest` |
+| `orchestrator` | Custom image (`node:20-slim`) | Coordinates full test lifecycle — pure Node.js | `vpn-speedtest` + Docker socket access |
 
 ### 3.3 Storage Layout
 
@@ -192,7 +192,7 @@ Longitude:  81.9495° W
 
 ### 4.5 Tunnel Verification — gluetun Control API
 
-Used to confirm the WireGuard tunnel is live before each test session begins. The orchestrator polls gluetun's built-in HTTP control server, which is accessible container-to-container on the `vpn-test` bridge without external DNS.
+Used to confirm the WireGuard tunnel is live before each test session begins. The orchestrator polls gluetun's built-in HTTP control server, which is accessible container-to-container on the `vpn-speedtest` bridge without external DNS.
 
 ```
 GET http://gluetun-speedtest:8000/v1/vpn/status
@@ -620,7 +620,7 @@ services:
     volumes:
       - /volume1/Docker/vpn-speed-tester/gluetun-speedtest:/gluetun
     networks:
-      - vpn-test
+      - vpn-speedtest
     restart: unless-stopped
     healthcheck:
       test: ping -c 1 -W 5 1.1.1.1 || exit 1
@@ -655,11 +655,11 @@ services:
     environment:
       - TZ=America/New_York
     networks:
-      - vpn-test
+      - vpn-speedtest
     restart: unless-stopped
 
 networks:
-  vpn-test:
+  vpn-speedtest:
     driver: bridge
     ipam:
       config:

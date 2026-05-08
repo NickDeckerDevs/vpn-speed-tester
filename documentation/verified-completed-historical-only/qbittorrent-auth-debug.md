@@ -217,7 +217,7 @@ If you want to remove credential dependency entirely (useful if the password cha
 
 | Subnet | Context |
 |---|---|
-| `172.21.0.0/24` | Docker `vpn-test` bridge — deployed `orchestrator` container |
+| `172.21.0.0/24` | Docker `vpn-speedtest` bridge — deployed `orchestrator` container |
 | `10.1.10.0/24` | NAS LAN — direct `npm run test:single` on the NAS connects via its own LAN IP |
 
 4. Save

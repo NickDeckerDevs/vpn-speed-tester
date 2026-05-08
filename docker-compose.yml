@@ -23,7 +23,7 @@ services:
     volumes:
       - /volume1/Docker/vpn-speed-tester/gluetun-speedtest:/gluetun
     networks:
-      - vpn-test
+      - vpn-speedtest
     restart: unless-stopped
     healthcheck:
       test: ping -c 1 -W 5 1.1.1.1 || exit 1
@@ -58,11 +58,11 @@ services:
     environment:
       - TZ=America/New_York
     networks:
-      - vpn-test
+      - vpn-speedtest
     restart: unless-stopped
 
 networks:
-  vpn-test:
+  vpn-speedtest:
     driver: bridge
     ipam:
       config:
