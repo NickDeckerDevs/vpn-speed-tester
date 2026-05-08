@@ -63,6 +63,15 @@ rsync -avz -e "ssh -p 8322" \
   ~/repos/vpn-speed-tester/ \
   $NAS:$NAS_DIR/
 
+# ── Step 1.5: Ensure data directories exist and sync report ────────────────
+echo "Ensuring data directories on NAS..."
+$SSH "$SUDO mkdir -p $NAS_DIR/data/snapshots $NAS_DIR/data/report $NAS_DIR/data/logs"
+
+echo "Syncing report to NAS..."
+rsync -avz -e "ssh -p 8322" \
+  $SCRIPT_DIR/report/ \
+  $NAS:$NAS_DIR/data/report/
+
 # ── Step 2: Take down existing stack ─────────────────────────────────────────
 echo "Taking down existing stack on NAS..."
 $SSH "$SUDO sh -c 'cd $NAS_DIR && docker compose down; docker rm -f gluetun-speedtest speedtest-runner orchestrator 2>/dev/null || true'"
