@@ -3,7 +3,7 @@ const logger = require('./logger');
 const config = require('./config');
 const { fetchUSServers } = require('./airvpnStatus');
 const { pickNextServer } = require('./queueBuilder');
-const { switchServer, stopGluetun } = require('./gluetunManager');
+const { switchServer, stopGluetun, ensureSpeedtestRunner } = require('./gluetunManager');
 const { runSpeedtest } = require('./speedTester');
 const { loadResults } = require('./resultsWriter');
 const { writeHourlySnapshot } = require('./snapshotWriter');
@@ -74,6 +74,9 @@ async function runSpeedTestWindow() {
       logger.info(`SESSION: switching gluetun to ${serverName}...`);
       await switchServer(serverName);
 
+      logger.info('SESSION: verifying speedtest-runner is live...');
+      await ensureSpeedtestRunner();
+
       const timestamp = getESTTimestamp();
       await appendServerData(timestamp, server);
       logger.info(`SESSION: saved server data with timestamp ${timestamp}`);
@@ -108,18 +111,26 @@ async function runSpeedTestWindow() {
       consecutiveFailures = 0;
 
     } catch (err) {
-      consecutiveFailures++;
-      const isNamespaceError = err.statusCode === 500 && err.message?.includes('network namespace');
-      const isFatal = isNamespaceError || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+      const isTunnelFailure = err.message.includes('gluetun-speedtest exited')
+        || err.message.includes('Tunnel failed after')
+        || err.message.includes('gluetun-speedtest container not found');
 
-      logger.error(`SESSION ERROR [${serverName}]: ${err.message}`);
+      if (isTunnelFailure) {
+        logger.warn(`SESSION SKIP [${serverName}]: tunnel issue — ${err.message}`);
+      } else {
+        consecutiveFailures++;
+        logger.error(`SESSION ERROR [${serverName}]: ${err.message}`);
 
-      if (isFatal) {
-        const reason = isNamespaceError
-          ? 'Docker network namespace error'
-          : `${MAX_CONSECUTIVE_FAILURES} consecutive failures`;
-        logger.error(`FATAL: ${reason} — stopping session window`);
-        break;
+        const isNamespaceError = err.statusCode === 500 && err.message?.includes('network namespace');
+        const isFatal = isNamespaceError || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+
+        if (isFatal) {
+          const reason = isNamespaceError
+            ? 'Docker network namespace error'
+            : `${MAX_CONSECUTIVE_FAILURES} consecutive failures`;
+          logger.error(`FATAL: ${reason} — stopping session window`);
+          break;
+        }
       }
     }
   }
