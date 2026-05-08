@@ -38,12 +38,11 @@ services:
       dockerfile: Dockerfile
     container_name: speedtest-runner
     network_mode: "service:gluetun-speedtest"
-    depends_on:
-      gluetun-speedtest:
-        condition: service_healthy
     volumes:
-      - /volume2/data/vpn-speed-tests:/data
+      - /volume1/Docker/vpn-speed-tester/data:/data
     restart: unless-stopped
+    entrypoint: []
+    command: sleep infinity
 
   orchestrator:
     build:
@@ -53,10 +52,21 @@ services:
     env_file: .env
     volumes:
       - /volume1/Docker/vpn-speed-tester/orchestrator:/config
-      - /volume2/data/vpn-speed-tests:/data
+      - /volume1/Docker/vpn-speed-tester/data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=America/New_York
+    networks:
+      - vpn-speedtest
+    restart: unless-stopped
+
+  report-server:
+    image: nginx:alpine
+    container_name: vpn-report
+    ports:
+      - "9191:80"
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/data/report:/usr/share/nginx/html:ro
     networks:
       - vpn-speedtest
     restart: unless-stopped
