@@ -55,19 +55,18 @@ async function runSpeedtest() {
     }
     throw err;
   }
-  const parsed = {
-    download_mbps: parseFloat((data.download / 1_000_000).toFixed(2)),
-    upload_mbps:   parseFloat((data.upload   / 1_000_000).toFixed(2)),
-    ping_ms:       parseFloat(data.ping.toFixed(2)),
-    jitter_ms:     parseFloat((data.server?.latency ?? 0).toFixed(2)),
-  };
+  logger.dump('DATA', data);
+
+  const download_mbps = parseFloat((data.download / 1_000_000).toFixed(2));
+  const upload_mbps = parseFloat((data.upload / 1_000_000).toFixed(2));
+  const ping_ms = parseFloat(data.ping.toFixed(2));
 
   logger.info(
-    `runSpeedtest: ↓${parsed.download_mbps} Mbps  ↑${parsed.upload_mbps} Mbps  ` +
-    `ping ${parsed.ping_ms}ms  jitter ${parsed.jitter_ms}ms`
+    `runSpeedtest: ↓${download_mbps} Mbps  ↑${upload_mbps} Mbps  ` +
+    `ping ${ping_ms}ms`
   );
 
-  return parsed;
+  return data;
 }
 
 module.exports = { runSpeedtest };

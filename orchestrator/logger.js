@@ -46,4 +46,11 @@ function fn(filepath, fnName, args) {
   info(`starting ${basename}-${fnName} | args: ${argsStr}`);
 }
 
-module.exports = { info, warn, error, debug, fn };
+function dump(label, obj) {
+  const banner = `=====[ ${label} ]=====`;
+  info(banner);
+  info(JSON.stringify(obj));
+  info(banner);
+}
+
+module.exports = { info, warn, error, debug, fn, dump };

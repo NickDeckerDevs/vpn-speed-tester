@@ -13,6 +13,8 @@ module.exports = {
   SNAPSHOTS_PATH:       '/data/snapshots/',
   GIT_REPO_PATH:        '/data/',
   LOGS_PATH:            '/data/logs/',
+  SERVER_DATA_PATH:     '/data/server-data.json',
+  RAW_RESULTS_PATH:     '/data/raw-results.json',
 
   CAPE_CORAL_LAT:       26.5629,
   CAPE_CORAL_LON:       -81.9495,
@@ -22,7 +24,7 @@ module.exports = {
   RUNS_PER_SESSION:     3,
   MS_BETWEEN_RUNS:      15000,
   TUNNEL_POLL_MS:       5000,
-  TUNNEL_TIMEOUT_MS:    60000,
+  TUNNEL_TIMEOUT_MS:    180000,
 
   TIER_THRESHOLDS: {
     low:    { min: 0,  max: 30  },

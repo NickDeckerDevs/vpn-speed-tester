@@ -51,9 +51,114 @@ All Phase 1 work is done and three pre-flight bugs have been fixed:
 
 ---
 
+## P0.5 — Resolve Tunnel & Speedtest Issues
+
+> **BLOCKER:** Gluetun tunnel not establishing on fresh stack deployment (May 2026-05-08). Code fixes are complete but end-to-end validation blocked.
+
+### Current Issue — PARTIALLY RESOLVED
+**Symptom (Updated):** Gluetun tunnel HTTP control API responds quickly, **but DNS through the tunnel is broken.** speedtest-cli fails with: `Cannot retrieve speedtest configuration. ERROR: <urlopen error [Errno -3] Temporary failure in name resolution>`
+
+**Evidence & Timeline:**
+- May 7: Early test runs completed 5 sessions with **null speed data** — root cause was missing `await` on `runSpeedtest()` ✅ **FIXED in code**
+- May 8 deployment: `await` fix deployed and verified in Docker
+- May 8 manual test (03:34 UTC): Chertan session started, tunnel confirmed after 2 attempts, **speedtest executed and returned real speeds** (↓231.89 Mbps ↑140.63 Mbps — confirmed in results.json)
+- May 8 continued: Subsequent tests failed when speedtest-cli tried to reach speedtest.net — DNS resolution failed inside tunnel
+
+**Key Discovery:** The `await` fix IS WORKING. Chertan's session shows correct speed averages in `results.json`. The tunnel itself comes up (control API responds). But DNS queries through the tunnel are failing.
+
+**Root Cause Analysis:**
+1. ✅ Code bug (missing await) — FIXED
+2. ❌ **Infrastructure issue:** DNS routing inside gluetun tunnel is not operational
+   - Gluetun container starts, control API responds → `waitForTunnel()` confirms
+   - WireGuard tunnel initializes (or control API is lying)
+   - But queries to 8.8.8.8 or domain names fail → speedtest-cli cannot reach speedtest.net
+   - Possible causes: DNS env vars wrong, WireGuard config incomplete, tunnel still initializing when control API responds
+
+### Proposed Solutions to Explore
+
+**Option A: Increase Tunnel Wait Time & Add Backoff**
+- Current: 5s poll interval, 60s timeout (12 attempts)
+- Try: 10s poll interval, 120s timeout, exponential backoff
+- Risk: Slower feedback loop, but might give gluetun more time to initialize
+- Effort: Low — 1 config change
+
+**Option B: Switch to Node.js Speedtest Library**
+- Current: exec `speedtest-cli` (Python binary) inside `speedtest-runner` container
+- Alternative: Use `speedtest-net` npm package (JavaScript, same API)
+- Benefit: Eliminates Python dependency, runs natively in Node.js, easier debugging
+- Risk: Different implementation, may have different edge cases
+- Effort: Medium — refactor `speedTester.js`, test compatibility
+- Investigation needed: Does `speedtest-net` work behind WireGuard tunnel? Performance equivalent to Python CLI?
+
+**Option C: Run Speedtest Locally (Not in Container)**
+- Current: speedtest-cli runs inside `speedtest-runner` container (routed through VPN tunnel)
+- Alternative: Have orchestrator run speedtest natively on the NAS host machine, then pipe results into results.json
+- Benefit: Sidesteps container networking complexity, easier to debug
+- Risk: Speedtest runs outside VPN tunnel unless you set up host-level routing (defeats purpose)
+- Effort: High — major architecture change, breaks isolation
+- Not recommended unless tunnel issues persist
+
+**Option D: Pre-flight Gluetun Health Check**
+- Add explicit health check before starting test session
+- Verify tunnel is truly operational (not just HTTP endpoint responding)
+- Example: ping a known IP through the tunnel before proceeding
+- Effort: Medium — add helper function to `gluetunManager.js`
+
+### Investigation Results & Recommendations
+
+**Option B Research (speedtest-net)** — COMPLETED
+
+The [speedtest-net npm package](https://www.npmjs.com/package/speedtest-net) is the most mature Node.js speedtest library:
+- **Adoption:** 41,123 weekly downloads (vs. speedtest-cli's 79)
+- **Implementation:** Wraps the official Ookla command-line client → results match speedtest.net web tests
+- **API:** Supports both CLI (`--accept-license --server-id X`) and Node.js module usage
+- **Compatibility:** No documented issues with VPN tunnels; should work through WireGuard if tunnel is operational
+- **Migration effort:** Medium — `npm install speedtest-net`, refactor `speedTester.js` to use `speedTest()` promise API instead of exec'ing speedtest-cli binary
+- **Risk:** Different library maintenance, but higher community adoption reduces risk vs. Python CLI
+
+Alternative packages found: `speed-test` (CLI wrapper), `speedtest-promise` (promise-based), but `speedtest-net` is recommended for maturity and Ookla integration.
+
+**Next Steps (DNS Tunnel Fix — Priority Order)**
+
+1. **Check gluetun container logs for DNS configuration:**
+   ```bash
+   ssh nas
+   sudo docker logs gluetun-speedtest 2>&1 | grep -i "dns\|route\|wireguard" | tail -30
+   ```
+   Look for: DNS server assignments, routing table setup, WireGuard state (UP/DOWN)
+
+2. **Verify DNS is working inside speedtest-runner container during active tunnel:**
+   ```bash
+   ssh nas
+   # Run during a speed test session
+   sudo docker exec speedtest-runner nslookup speedtest.net
+   sudo docker exec speedtest-runner ping -c 1 8.8.8.8  # Google DNS
+   ```
+   If both fail → tunnel isn't carrying DNS/IP traffic despite API responding
+
+3. **Check gluetun DNS env var in docker-compose.yml:**
+   Confirm the `DNS_IPV6=false` setting we added. Check if `DNS_PLAINTEXT` or other DNS vars are set. Gluetun defaults to Quad9/Cloudflare but may be mis-configured.
+
+4. **Increase tunnel wait time and add connectivity check:**
+   - Current: 5s poll interval, 60s timeout
+   - Proposed: Wait 10s AFTER control API confirms, then verify DNS works, before proceeding
+   - This gives WireGuard handshake more time to complete
+
+5. **Verify WireGuard config on NAS hasn't drifted:**
+   ```bash
+   ssh nas
+   cat /volume1/Docker/vpn-speed-tester/.env | grep WIREGUARD
+   ```
+   Confirm all 4 WireGuard vars present and valid (keys especially — they can expire or be revoked)
+
+6. **Test speedtest-net npm package as fallback:**
+   If DNS tunnel debugging doesn't resolve quickly, switching to speedtest-net (which we researched earlier) may be faster since it's actively maintained and could have better tunnel compatibility handling. Would avoid Python CLI issues entirely.
+
+---
+
 ## P0 — Deploy & Validate
 
-> Nothing else matters until the stack runs end-to-end on the NAS with real data.
+> After tunnel issue is resolved, validate end-to-end with real speedtest data.
 
 ### Repository Setup
 - [ ] Push local repo to GitHub (`git push -u origin master`)
