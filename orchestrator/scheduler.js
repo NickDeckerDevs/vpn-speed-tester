@@ -3,12 +3,14 @@ const logger = require('./logger');
 const config = require('./config');
 const { fetchUSServers } = require('./airvpnStatus');
 const { pickNextServer } = require('./queueBuilder');
-const { switchServer, stopGluetun, ensureSpeedtestRunner } = require('./gluetunManager');
+const { switchServer, tearDownTestContainers, restoreBaseContainers, ensureSpeedtestRunner, captureBaseConfig } = require('./gluetunManager');
 const { runSpeedtest } = require('./speedTester');
-const { loadResults } = require('./resultsWriter');
+const { writeResults, loadResults } = require('./resultsWriter');
 const { writeHourlySnapshot } = require('./snapshotWriter');
 const { pauseAll, resumeAll } = require('./qbtClient');
 const { appendServerData, appendRawResult } = require('./rawDataWriter');
+
+const SECONDS_BETWEEN_RUNS = 10;
 
 function getESTTimestamp() {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -25,7 +27,7 @@ function getESTTimestamp() {
   return `${p.year}${p.month}${p.day}${p.hour}${p.minute}${p.second}`;
 }
 
-async function runSpeedTestWindow() {
+async function runSpeedTestWindow(opts = {}) {
   logger.fn(__filename, 'runSpeedTestWindow', null);
 
   const windowStart = new Date();
@@ -42,6 +44,10 @@ async function runSpeedTestWindow() {
 
   logger.info('PRE-FLIGHT: loading existing results...');
   let results = await loadResults();
+
+  logger.info('PRE-FLIGHT: capturing base container config...');
+  await captureBaseConfig();
+
   logger.info('PRE-FLIGHT: complete');
 
   // ── Step 2: Per-server test session loop ──────────────────────
@@ -95,19 +101,17 @@ async function runSpeedTestWindow() {
         logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION} complete: ↓${dl} Mbps ↑${ul} Mbps ping ${ping}ms`);
 
         if (runNum < config.RUNS_PER_SESSION) {
-          logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: waiting ${config.MS_BETWEEN_RUNS / 1000}s before next run...`);
-          await new Promise(resolve => setTimeout(resolve, config.MS_BETWEEN_RUNS));
+          logger.info(`RUN ${runNum}/${config.RUNS_PER_SESSION}: waiting ${SECONDS_BETWEEN_RUNS}s before next run...`);
+          await new Promise(resolve => setTimeout(resolve, SECONDS_BETWEEN_RUNS * 1000));
         }
       }
 
-      // ── Mark tested in-memory so pickNextServer advances ────────
-      if (!results[serverName]) {
-        results[serverName] = { tiers: { low: [], medium: [], high: [], diablo: [] } };
-      }
-      results[serverName].tiers[server.tier].push({ session_id: timestamp });
+      results.push({ server_name: serverName, tier: server.tier, timestamp, run_count: config.RUNS_PER_SESSION });
+      await writeResults(results);
 
       serversTestedThisWindow.push({ serverName, tier: server.tier });
       logger.info(`SESSION: ${serverName} complete ✓`);
+      if (opts.singleRun) break;
       consecutiveFailures = 0;
 
     } catch (err) {
@@ -132,14 +136,17 @@ async function runSpeedTestWindow() {
           break;
         }
       }
+    } finally {
+      await tearDownTestContainers();
     }
   }
 
   // ── Step 3: Shutdown ──────────────────────────────────────────
   logger.info('\n=== SHUTDOWN sequence ===');
-  logger.info('SHUTDOWN: stopping gluetun-speedtest...');
-  await stopGluetun();
-
+  logger.info('SHUTDOWN: stopping test containers...');
+  await tearDownTestContainers();
+  logger.info('SHUTDOWN: restoring base containers...');
+  await restoreBaseContainers();
   logger.info('SHUTDOWN: resuming qBittorrent...');
   await resumeAll();
 

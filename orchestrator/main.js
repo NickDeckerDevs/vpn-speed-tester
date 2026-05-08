@@ -8,7 +8,7 @@ logger.info(`vpn-speed-tester orchestrator starting — mode: ${isManual ? 'MANU
 
 if (isManual) {
   logger.info('Manual run: triggering one speed test window immediately');
-  scheduler.runSpeedTestWindow().catch(err => {
+  scheduler.runSpeedTestWindow({ singleRun: true }).catch(err => {
     logger.error(`Manual run failed: ${err.message}`);
     process.exit(1);
   });

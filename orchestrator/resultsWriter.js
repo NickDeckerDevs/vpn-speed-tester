@@ -29,31 +29,22 @@ async function writeResults(data) {
   );
   await fs.writeJson(tmpPath, data, { spaces: 2 });
   await fs.move(tmpPath, config.RESULTS_PATH, { overwrite: true });
-
-  // Log the first server's data shape for debugging
-  const firstServerName = Object.keys(data)[0];
-  const firstServer = data[firstServerName];
-  let summary = `wrote ${Object.keys(data).length} servers`;
-  if (firstServer && Object.keys(firstServer.tiers).some(t => firstServer.tiers[t].length > 0)) {
-    const tier = Object.keys(firstServer.tiers).find(t => firstServer.tiers[t].length > 0);
-    const latestSession = firstServer.tiers[tier][firstServer.tiers[tier].length - 1];
-    if (latestSession && latestSession.runs && latestSession.runs.length > 0) {
-      const latestRun = latestSession.runs[latestSession.runs.length - 1];
-      summary += ` | ${firstServerName} ${tier} runs=${latestSession.runs.length} ↓${latestRun.download_mbps ?? 'null'} Mbps ↑${latestRun.upload_mbps ?? 'null'} Mbps`;
-    }
-  }
-  logger.info(`writeResults: ${summary} to ${config.RESULTS_PATH}`);
+  logger.info(`writeResults: wrote ${data.length} sessions to ${config.RESULTS_PATH}`);
 }
 
 async function loadResults() {
   logger.fn(__filename, 'loadResults', null);
   try {
     const data = await fs.readJson(config.RESULTS_PATH);
-    logger.info(`loadResults: loaded ${Object.keys(data).length} servers from existing results`);
+    if (!Array.isArray(data)) {
+      logger.warn('loadResults: results file is not array format — starting fresh');
+      return [];
+    }
+    logger.info(`loadResults: loaded ${data.length} sessions from existing results`);
     return data;
   } catch {
     logger.info('loadResults: no existing results file — starting fresh');
-    return {};
+    return [];
   }
 }
 

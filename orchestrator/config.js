@@ -22,7 +22,6 @@ module.exports = {
   TEST_WINDOW_HOURS:    2,
   TEST_START_HOUR:      3,
   RUNS_PER_SESSION:     3,
-  MS_BETWEEN_RUNS:      15000,
   TUNNEL_POLL_MS:       5000,
   TUNNEL_TIMEOUT_MS:    180000,
 
