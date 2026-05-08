@@ -8,31 +8,16 @@ Operational guide for the VPN speed tester stack. Covers first-time setup, enabl
 
 > **Assumes:** repo is on your Mac, `.env` is filled in, NAS is reachable at `10.1.10.254:8322`.
 
-### Step 1 — Deploy code to the NAS
+### Step 1 — Deploy code and bring up the stack
 
 ```bash
 cd ~/repos/vpn-speed-tester
 ./deploy.sh
 ```
 
-**What happens:** `deploy.sh` validates that every `.env` variable is present and not a placeholder, then `rsync`s the whole repo to `/volume1/Docker/vpn-speed-tester/` on the NAS over SSH, then runs `docker compose down` + `docker rm -f` to tear down any existing containers. It polls until they're gone, then exits. It does **not** start the stack — that's the next step.
+**What happens:** `deploy.sh` validates that every `.env` variable is present and not a placeholder, then `rsync`s the whole repo to `/volume1/Docker/vpn-speed-tester/` on the NAS over SSH, tears down any existing containers, and automatically brings up the new stack with `docker compose up -d --build`. The entire deployment is fully automated — no manual SSH required.
 
----
-
-### Step 2 — SSH to the NAS and start the stack
-
-```bash
-ssh -p 8322 sysop@10.1.10.254
-```
-
-Then on the NAS:
-
-```bash
-cd /volume1/Docker/vpn-speed-tester
-sudo docker compose up -d --build
-```
-
-**What happens:** Docker builds the image (`node:20-slim` + Python 3 + `speedtest-cli`) and starts three containers:
+The script polls until old containers are confirmed gone, starts the new ones, waits for them to be healthy, then verifies they're running before exiting. Docker builds the image (`node:20-slim` + Python 3 + `speedtest-cli`) and starts three containers:
 
 - **`orchestrator`** — this is the brain. It runs `node main.js` and is what actually controls everything. In normal (non-manual) mode it registers cron jobs and waits. This is the reason we run `docker compose up`.
 - **`gluetun-speedtest`** — starts a WireGuard VPN tunnel using your credentials from `.env`. It defaults to the server `Aladfar` because the compose file has `SERVER_NAMES=${SERVER_NAMES:-Aladfar}`. **This connection is immediately discarded** the moment a test run starts — the orchestrator always tears gluetun down and recreates it with a freshly chosen server. The initial Aladfar connection exists only because gluetun needs *some* server on startup.
@@ -48,13 +33,9 @@ sudo docker ps
 
 ---
 
-### Step 3 — Trigger a manual test
+### Step 4 — Understand what a manual test does
 
-```bash
-sudo docker exec orchestrator npm run test:single
-```
-
-**What happens:** Runs `node main.js --manual` inside the orchestrator. The `--manual` flag skips the cron and immediately calls `runSpeedTestWindow()`. Here is the exact sequence:
+The `npm run test:single` command runs `node main.js --manual` inside the orchestrator. The `--manual` flag skips the cron and immediately calls `runSpeedTestWindow()`. Here is the exact sequence:
 
 1. **Pause torrents** — logs into qBittorrent WebUI, records which torrents are actively downloading (by hash), sends stop-all. Polls until all torrents confirm stopped.
 
@@ -95,7 +76,18 @@ waitForTunnel: tunnel confirmed after N attempt(s)
 
 ---
 
-### Step 4 — Verify results on disk
+### Step 2 — Trigger a manual test
+
+```bash
+ssh -p 8322 sysop@10.1.10.254
+sudo docker exec orchestrator npm run test:single
+```
+
+**What happens:** Runs `node main.js --manual` inside the orchestrator. See "Step 3" below for details on what the test does.
+
+---
+
+### Step 3 — Verify results on disk
 
 ```bash
 ls -lh /volume1/Docker/vpn-speed-tester/data/results.json
@@ -181,64 +173,44 @@ Required values:
 
 ---
 
-### Step 3 — Deploy to the NAS
+### Step 3 — Deploy to the NAS (fully automated)
 
-Run the deploy script from your Mac. It validates `.env`, rsyncs all code and config to the NAS, tears down the old stack, and polls until all containers are confirmed gone:
+Run the deploy script from your Mac. It handles everything: validation, rsync, teardown, and bringing up the stack:
 
 ```bash
 cd ~/repos/vpn-speed-tester
 ./deploy.sh
 ```
 
-The script exits with an error if any `.env` value is missing or still a placeholder. Fix it before continuing.
+The script:
+1. Validates that every `.env` variable is present and not a placeholder
+2. Rsyncs all code and config to `/volume1/Docker/vpn-speed-tester/` on the NAS
+3. Tears down any existing containers (docker compose down + docker rm -f)
+4. Polls until all containers are confirmed gone
+5. **Automatically brings up the stack** with `docker compose up -d --build`
+6. Verifies the new containers are running
+7. Reports success with container status
 
-When `./deploy.sh` finishes you'll see:
+The first build takes ~30–60 seconds (installs Python, pip, and speedtest-cli).
+
+When `./deploy.sh` finishes successfully you'll see:
 ```
-Done. To bring the stack up: SSH to NAS → sudo docker compose up -d --build
+✓ Deployment complete! Crons are active and ready to run.
+Stack is up:
+CONTAINER ID   NAMES                    STATUS
+...            gluetun-speedtest        Up X seconds
+...            speedtest-runner         Up X seconds
+...            orchestrator             Up X seconds
 ```
+
+**No manual SSH steps required.**
 
 ---
 
-### Step 4 — Create Volume 2 data directories and copy the report (one-time, on the NAS)
-
-SSH into the NAS and run:
+### Step 4 — Run the first manual test (verify everything works)
 
 ```bash
-mkdir -p /volume1/Docker/vpn-speed-tester/data/snapshots
-mkdir -p /volume1/Docker/vpn-speed-tester/data/report
-mkdir -p /volume1/Docker/vpn-speed-tester/data/logs
-cp /volume1/Docker/vpn-speed-tester/report/index.html /volume1/Docker/vpn-speed-tester/data/report/index.html
-```
-
----
-
-### Step 5 — Bring the stack up on the NAS
-
-SSH into the NAS and run:
-
-```bash
-cd /volume1/Docker/vpn-speed-tester
-sudo docker compose up -d --build
-```
-
-The first build takes ~30–60 seconds (installs Python, pip, and speedtest-cli). Confirm all three containers are running:
-
-```bash
-sudo docker ps
-```
-
-Expected — all three showing `Up`:
-- `gluetun-speedtest` — shows `(healthy)` after ~45 seconds
-- `speedtest-runner`
-- `orchestrator`
-
-You can also check Portainer at `http://10.1.10.254:9000`.
-
----
-
-### Step 6 — Run the first manual test
-
-```bash
+ssh -p 8322 sysop@10.1.10.254
 sudo docker exec orchestrator npm run test:single
 ```
 
@@ -267,7 +239,7 @@ cd /volume1/Docker/vpn-speed-tester/data && git log --oneline
 
 ---
 
-### Step 7 — Run the second manual test
+### Step 5 — Run the second manual test
 
 Same command — the queue builder picks a different server/tier than run 1:
 
@@ -279,7 +251,7 @@ Confirm `results.json` has two servers' worth of data, then open `report/index.h
 
 ---
 
-### Step 8 — Verify snapshots
+### Step 6 — Verify snapshots
 
 Wait for the hourly cron to fire (or restart the orchestrator near the top of the hour), then:
 
@@ -295,16 +267,13 @@ Confirm `index.json` lists the snapshot file, and that report Tab 2 (Hourly Snap
 ### Redeploying after a code change
 
 ```bash
-# On your Mac — validates .env, rsyncs, tears down the old stack
+# On your Mac — validates .env, rsyncs, tears down, and brings back up (all automated)
 ./deploy.sh
-
-# SSH to the NAS — rebuild and bring back up
-ssh nas
-cd /volume1/Docker/vpn-speed-tester
-sudo docker compose up -d --build
 ```
 
-Or use Portainer → Stacks → `vpn-speed-tester` → **Pull and redeploy**.
+That's it! The deployment is fully automated. No manual SSH steps needed. You can now make code changes, run `./deploy.sh`, and have confidence that the crons will fire on schedule.
+
+Alternatively, use Portainer → Stacks → `vpn-speed-tester` → **Pull and redeploy**.
 
 ---
 

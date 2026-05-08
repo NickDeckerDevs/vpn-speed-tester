@@ -18,7 +18,7 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 ### Deployment & Operations Scripts
 | File | Role | How It's Used | Target |
 |---|---|---|---|
-| `deploy.sh` | Validate → rsync → teardown → poll | Run locally: `./deploy.sh` | Syncs repo to NAS; tears down old containers; waits for cleanup |
+| `deploy.sh` | Validate → rsync → teardown → **bring up stack** (fully automated) | Run locally: `./deploy.sh` | Syncs repo to NAS; tears down old containers; automatically starts new stack; verifies health |
 | `deploy.sh --check` | Show live container status | `./deploy.sh --check` | SSH into NAS and runs docker ps |
 | `view-report.sh` | Pull report HTML from NAS → open browser | `./view-report.sh` | Fetches latest HTML report back to local |
 | `view-data.sh` | Multi-command data viewer (summary/json/logs/servers) | `./view-data.sh [command]` | Reads data from NAS via SSH |
@@ -87,7 +87,7 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 - Update `.env` with secrets (never committed)
 - Populate `docker-compose.yml` with environment variables
 
-### 2. Deploy (Run Locally)
+### 2. Deploy (Run Locally — Fully Automated)
 ```bash
 ./deploy.sh
 ```
@@ -98,15 +98,11 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 4. Rsync `report/` HTML to NAS data directory
 5. Tear down existing containers
 6. Poll until all three containers are confirmed gone
+7. **Automatically bring up the new stack** with `docker compose up -d --build` (no manual SSH required)
+8. Verify all containers are running and healthy
+9. Report success to console
 
-### 3. Start Stack (On NAS)
-SSH into NAS:
-```bash
-ssh -p 8322 sysop@10.1.10.254
-cd /volume1/Docker/vpn-speed-tester
-docker compose up -d --build
-```
-**Containers start:**
+Containers start automatically:
 - `gluetun-speedtest` — WireGuard tunnel to AirVPN (isolated VPN stack)
 - `speedtest-runner` — Node environment with speedtest-cli binary, runs on gluetun's network
 - `orchestrator` — Node process running `main.js` in SCHEDULED mode (crons registered)

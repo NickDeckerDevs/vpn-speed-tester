@@ -95,4 +95,21 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
   echo "WARNING: containers may still be running after ${TIMEOUT}s — check manually."
 fi
 
-echo "Done. To bring the stack up: SSH to NAS → sudo docker compose up -d --build"
+# ── Step 4: Bring up the stack ───────────────────────────────────────────────
+echo "Bringing up the stack..."
+$SSH "$SUDO sh -c 'cd $NAS_DIR && docker compose up -d --build'"
+
+# ── Step 5: Verify stack is up ───────────────────────────────────────────────
+echo "Verifying stack..."
+sleep 3
+CONTAINERS=$($SSH "$SUDO docker ps --filter 'name=gluetun-speedtest' --filter 'name=speedtest-runner' --filter 'name=orchestrator' --format 'table {{.Names}}\t{{.Status}}'")
+
+if [ -z "$CONTAINERS" ]; then
+  echo "ERROR: containers did not start. Check NAS logs with: ./deploy.sh --check"
+  exit 1
+fi
+
+echo "Stack is up:"
+echo "$CONTAINERS"
+echo ""
+echo "✓ Deployment complete! Crons are active and ready to run."
