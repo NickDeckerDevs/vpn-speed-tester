@@ -1,12 +1,23 @@
 #!/bin/bash
-
-# Export a text summary of speed test results
+# export-summary.sh — Generate a formatted text summary of speed-test results.
+#
+# Syncs results.json from the NAS, then uses jq to produce a human-readable
+# breakdown of tested servers, tier counts, and average download speeds.
+# Output is written to a file (default: vpn-speed-test-summary.txt) and also
+# printed to stdout. Pass a filename as the first argument to override the default.
+#
+# TODO (future): NAS connection vars (NAS, NAS_DIR, SSH, rsync -e string) are
+# duplicated across deploy.sh, export-summary.sh, view-data.sh, view-report.sh,
+# and test-manual.sh. Extract to a shared lib.sh sourced by each script.
+#
+# Changelog
+# 2026-05-14  Switched SSH and rsync from password-only to key-based auth (id_nas)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAS="sysop@10.1.10.254"
 NAS_DIR="/volume1/Docker/vpn-speed-tester/data"
-SSH="ssh -p 8322 $NAS"
+SSH="ssh -i $HOME/.ssh/id_nas -p 8322 $NAS"
 OUTPUT_FILE="${1:-vpn-speed-test-summary.txt}"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
@@ -14,7 +25,7 @@ echo "⏳ Generating summary report..."
 
 # Sync data locally first
 echo "  Syncing data from NAS..."
-rsync -avz -e "ssh -p 8322" --include="results.json" --exclude="*" \
+rsync -avz -e "ssh -i $HOME/.ssh/id_nas -p 8322" --include="results.json" --exclude="*" \
   "$NAS:$NAS_DIR/" "$SCRIPT_DIR/data/" > /dev/null 2>&1
 
 DATA=$(cat "$SCRIPT_DIR/data/results.json" 2>/dev/null)
