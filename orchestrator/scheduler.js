@@ -1,14 +1,116 @@
+/*
+ * scheduler.js — Cron orchestrator and main test-window logic.
+ *
+ * Entry point for the scheduled system (invoked by main.js). Registers two
+ * cron jobs: the nightly speed-test window and the hourly AirVPN snapshot.
+ * runSpeedTestWindow() drives the full per-server test cycle: pause qBt,
+ * pre-filter servers to gluetun-accepted candidates, loop picking servers and
+ * running speedtest-cli, then resume qBt on shutdown.
+ *
+ * Responsibility split with gluetunManager.js:
+ *   getAcceptedServers()     — raw API fetch, throws if gluetun is down (gluetunManager.js)
+ *   resolveAcceptedServers() — resilient fetch + disk cache fallback (this file)
+ * These are intentionally separate layers, not duplications.
+ *
+ * Changelog
+ * 2026-05-14  Added resolveAcceptedServers() — wraps getAcceptedServers() with a
+ *               disk-cache fallback so pre-filtering survives gluetun not yet being
+ *               up at window start; returns null (no filtering) if neither source works
+ * 2026-05-14  Added writeUnreachableReport() — writes per-window JSON diff of
+ *               live AirVPN US servers vs gluetun-accepted list for debugging
+ * 2026-05-14  runSpeedTestWindow() now calls resolveAcceptedServers() in pre-flight
+ *               and filters liveServers to only gluetun-accepted candidates;
+ *               unreachable report written once per window (unreachableLoggedThisWindow)
+ * 2026-05-14  MAX_CONSECUTIVE_FAILURES moved to config.js (was local const = 2, now = 5)
+ */
+
 const cron = require('node-cron');
+const fs = require('fs-extra');
 const logger = require('./logger');
 const config = require('./config');
 const { fetchUSServers } = require('./airvpnStatus');
 const { pickNextServer } = require('./queueBuilder');
-const { switchServer, stopGluetun, ensureSpeedtestRunner } = require('./gluetunManager');
+const { switchServer, stopGluetun, ensureSpeedtestRunner, getAcceptedServers } = require('./gluetunManager');
 const { runSpeedtest } = require('./speedTester');
 const { loadResults } = require('./resultsWriter');
 const { writeHourlySnapshot } = require('./snapshotWriter');
 const { pauseAll, resumeAll } = require('./qbtClient');
 const { appendServerData, appendRawResult } = require('./rawDataWriter');
+
+/**
+ * Returns a Set<string> of gluetun-accepted AirVPN server names.
+ *
+ * Tries the live gluetun control API first and writes the result to disk as a
+ * cache. Falls back to that cached file if gluetun is not yet running (common
+ * at window start before switchServer() has brought it up). Returns null if
+ * neither source is available — callers must treat null as "no filtering"
+ * rather than "filter everything".
+ *
+ * See getAcceptedServers() in gluetunManager.js for the raw-fetch counterpart.
+ */
+async function resolveAcceptedServers() {
+  try {
+    const accepted = await getAcceptedServers();
+    try {
+      await fs.outputJson(config.ACCEPTED_SERVERS_PATH, {
+        generated_at: new Date().toISOString(),
+        source: 'gluetun-control-api',
+        count: accepted.size,
+        servers: [...accepted].sort(),
+      }, { spaces: 2 });
+    } catch (writeErr) {
+      logger.warn(`resolveAcceptedServers: cache write failed (${writeErr.message})`);
+    }
+    return accepted;
+  } catch (err) {
+    logger.warn(`resolveAcceptedServers: live query failed (${err.message}) — falling back to cached list`);
+  }
+
+  try {
+    const cached = await fs.readJson(config.ACCEPTED_SERVERS_PATH);
+    if (Array.isArray(cached?.servers) && cached.servers.length > 0) {
+      logger.info(`resolveAcceptedServers: using cached list (${cached.servers.length} servers, generated ${cached.generated_at})`);
+      return new Set(cached.servers);
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') logger.warn(`resolveAcceptedServers: cache read failed (${err.message})`);
+  }
+
+  logger.warn('resolveAcceptedServers: no accepted-list available — proceeding without server filtering');
+  return null;
+}
+
+/**
+ * Writes a JSON report to UNREACHABLE_SERVERS_PATH comparing live AirVPN US
+ * servers against gluetun's accepted list for this window. Written once per
+ * window (gated by unreachableLoggedThisWindow in the caller) so the file
+ * always reflects the most-recent window's snapshot.
+ *
+ * Useful for diagnosing why certain servers are never tested: if a server
+ * appears in AirVPN's live API but not in gluetun's bundled list, speedtest
+ * results for it would be routed outside the VPN.
+ */
+async function writeUnreachableReport({ windowStart, liveServers, acceptedSet }) {
+  const liveNames = liveServers.map(s => s.public_name);
+  const unreachable = liveNames.filter(n => !acceptedSet.has(n)).sort();
+  const accepted = liveNames.filter(n => acceptedSet.has(n)).sort();
+
+  try {
+    await fs.outputJson(config.UNREACHABLE_SERVERS_PATH, {
+      generated_at: new Date().toISOString(),
+      window_start: windowStart.toISOString(),
+      gluetun_accepted_count: acceptedSet.size,
+      airvpn_us_count: liveNames.length,
+      accepted_us_count: accepted.length,
+      unreachable_count: unreachable.length,
+      unreachable,
+      accepted,
+    }, { spaces: 2 });
+  } catch (err) {
+    logger.warn(`writeUnreachableReport: write failed (${err.message})`);
+  }
+  return { unreachable, accepted };
+}
 
 function getESTTimestamp() {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -42,16 +144,36 @@ async function runSpeedTestWindow() {
 
   logger.info('PRE-FLIGHT: loading existing results...');
   let results = await loadResults();
+
+  logger.info('PRE-FLIGHT: resolving gluetun accepted-server list...');
+  const acceptedSet = await resolveAcceptedServers();
   logger.info('PRE-FLIGHT: complete');
 
   // ── Step 2: Per-server test session loop ──────────────────────
   const serversTestedThisWindow = [];
   let consecutiveFailures = 0;
-  const MAX_CONSECUTIVE_FAILURES = 2;
+  let unreachableLoggedThisWindow = false;
 
   while (Date.now() < windowEnd.getTime()) {
     logger.info('Fetching live AirVPN status...');
-    const liveServers = await fetchUSServers();
+    const liveServersRaw = await fetchUSServers();
+
+    let liveServers = liveServersRaw;
+    if (acceptedSet) {
+      liveServers = liveServersRaw.filter(s => acceptedSet.has(s.public_name));
+      // Write the unreachable report only on the first iteration — the accepted
+      // list doesn't change mid-window, so repeated writes would be identical noise
+      if (!unreachableLoggedThisWindow) {
+        const { unreachable } = await writeUnreachableReport({
+          windowStart, liveServers: liveServersRaw, acceptedSet,
+        });
+        logger.info(
+          `window filter: ${liveServers.length}/${liveServersRaw.length} US servers reachable via gluetun` +
+          (unreachable.length ? ` — skipping ${unreachable.length}: ${unreachable.join(', ')}` : '')
+        );
+        unreachableLoggedThisWindow = true;
+      }
+    }
 
     const server = pickNextServer(liveServers, results);
 
@@ -122,12 +244,12 @@ async function runSpeedTestWindow() {
         logger.error(`SESSION ERROR [${serverName}]: ${err.message}`);
 
         const isNamespaceError = err.statusCode === 500 && err.message?.includes('network namespace');
-        const isFatal = isNamespaceError || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+        const isFatal = isNamespaceError || consecutiveFailures >= config.MAX_CONSECUTIVE_FAILURES;
 
         if (isFatal) {
           const reason = isNamespaceError
             ? 'Docker network namespace error'
-            : `${MAX_CONSECUTIVE_FAILURES} consecutive failures`;
+            : `${config.MAX_CONSECUTIVE_FAILURES} consecutive failures`;
           logger.error(`FATAL: ${reason} — stopping session window`);
           break;
         }
