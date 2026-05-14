@@ -1,10 +1,30 @@
 #!/bin/bash
+# deploy.sh — Deploy the VPN speed-tester stack to the Synology NAS.
+#
+# Run from your laptop. Rsyncs the repo to the NAS, tears down the existing
+# Docker stack, waits for containers to stop, then brings everything back up
+# with "docker compose up -d --build". Use --check to show container status
+# without deploying.
+#
+# Requires ~/.ssh/id_nas to exist and its pubkey to be in sysop@10.1.10.254's
+# authorized_keys. SYSOP_SSH (sudo password) is still needed for docker commands
+# because the sysop user is not in the docker group on this NAS.
+#
+# TODO (future): NAS connection vars (NAS, NAS_DIR, SSH, rsync -e string) are
+# duplicated across deploy.sh, export-summary.sh, view-data.sh, view-report.sh,
+# and test-manual.sh. Extract to a shared lib.sh sourced by each script.
+# get_env_var() is also duplicated between this file and test-manual.sh.
+#
+# Changelog
+# 2026-05-14  Switched SSH and rsync from password-only to key-based auth (id_nas)
+# 2026-05-14  Added ~/.ssh/id_nas existence check with actionable error message
+#               (prevents silent interactive-prompt hang in non-terminal contexts)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAS="sysop@10.1.10.254"
 NAS_DIR="/volume1/Docker/vpn-speed-tester"
-SSH="ssh -p 8322 $NAS"
+SSH="ssh -i $HOME/.ssh/id_nas -p 8322 $NAS"
 
 # ── Load .env and validate required vars ──────────────────────────────────────
 ENV_FILE="$SCRIPT_DIR/.env"
@@ -13,6 +33,8 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# TODO (future): this function is copy-pasted in test-manual.sh; extract both
+# to lib.sh if the env-loading logic ever needs to change
 get_env_var() {
   grep "^$1=" "$ENV_FILE" | cut -d'=' -f2- | tr -d "'\""
 }
@@ -39,6 +61,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   exit 1
 fi
 
+# Fail fast if the key is missing — without it SSH would fall back to a
+# password prompt, which hangs in non-interactive shells (cron, CI, etc.)
+if [ ! -f "$HOME/.ssh/id_nas" ]; then
+  echo "ERROR: ~/.ssh/id_nas not found. Generate a key and add the pubkey to sysop@10.1.10.254:~/.ssh/authorized_keys, or copy id_nas from another machine."
+  exit 1
+fi
+
 SUDO="echo $(printf '%q' "$SYSOP_SSH") | sudo -S"
 
 CHECK_ONLY=false
@@ -57,7 +86,7 @@ fi
 
 # ── Step 1: Sync ──────────────────────────────────────────────────────────────
 echo "Syncing to NAS..."
-rsync -avz -e "ssh -p 8322" \
+rsync -avz -e "ssh -i $HOME/.ssh/id_nas -p 8322" \
   --exclude='.git' \
   --exclude='node_modules' \
   "$(dirname "$0")/" \
@@ -68,7 +97,7 @@ echo "Ensuring data directories on NAS..."
 $SSH "$SUDO mkdir -p $NAS_DIR/data/snapshots $NAS_DIR/data/report $NAS_DIR/data/logs"
 
 echo "Syncing report to NAS..."
-rsync -avz -e "ssh -p 8322" \
+rsync -avz -e "ssh -i $HOME/.ssh/id_nas -p 8322" \
   $SCRIPT_DIR/report/ \
   $NAS:$NAS_DIR/data/report/
 
