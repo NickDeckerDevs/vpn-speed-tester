@@ -1,3 +1,24 @@
+/*
+ * gluetunManager.js — Docker container lifecycle and VPN tunnel management.
+ *
+ * Sole module allowed to create, start, stop, or remove Docker containers.
+ * Manages two containers: gluetun-speedtest (WireGuard tunnel) and
+ * speedtest-runner (shares gluetun's network namespace). All other modules
+ * that need to exec inside a container (e.g. speedTester.js) call
+ * docker.exec() directly — they do NOT use this module for that.
+ *
+ * Responsibility split with scheduler.js:
+ *   getAcceptedServers()  — raw fetch from gluetun control API (this file)
+ *   resolveAcceptedServers() — resilient fetch with disk cache (scheduler.js)
+ * Keep these separate; scheduler owns the fallback/caching concern.
+ *
+ * Changelog
+ * 2026-05-14  Added getAcceptedServers() — queries gluetun's /v1/servers/airvpn
+ *               endpoint to return a Set<string> of server public_names that this
+ *               gluetun binary will accept; used by scheduler.js to pre-filter
+ *               the AirVPN US server list before picking a test candidate
+ */
+
 const Docker = require('dockerode');
 const logger = require('./logger');
 const httpClient = require('./httpClient');
@@ -233,4 +254,31 @@ async function stopGluetun() {
   await tearDown(null, config.GLUETUN_CONTAINER, true);
 }
 
-module.exports = { switchServer, waitForTunnel, stopGluetun, ensureSpeedtestRunner };
+/**
+ * Returns a Set<string> of AirVPN server public_names that this gluetun
+ * binary will accept. Pulls live from gluetun's /v1/servers/airvpn endpoint.
+ *
+ * Throws if gluetun is not running (connection refused) or if the API returns
+ * an empty list (which would incorrectly filter out all candidates).
+ * Callers that need resilience against gluetun being offline should use
+ * resolveAcceptedServers() in scheduler.js instead — it adds a disk cache
+ * fallback and a safe null return when neither source is available.
+ */
+async function getAcceptedServers() {
+  logger.fn(__filename, 'getAcceptedServers()', null);
+  const data = await httpClient.get(
+    config.GLUETUN_SERVERS_URL,
+    { timeout: 10000 },
+    'gluetun servers/airvpn'
+  );
+  const list = Array.isArray(data) ? data : (data?.servers || []);
+  const names = new Set();
+  for (const entry of list) {
+    const name = entry?.server_name || entry?.name;
+    if (name) names.add(name);
+  }
+  if (names.size === 0) throw new Error('gluetun returned no AirVPN server names');
+  return names;
+}
+
+module.exports = { switchServer, waitForTunnel, stopGluetun, ensureSpeedtestRunner, getAcceptedServers };
