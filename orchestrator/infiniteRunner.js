@@ -1,11 +1,13 @@
 const logger = require('./logger');
 const { fetchUSServers } = require('./airvpnStatus');
 const { pickNextServer } = require('./queueBuilder');
-const { switchServer, stopGluetun } = require('./gluetunManager');
+const { switchServer, tearDownTestContainers, restoreBaseContainers, captureBaseConfig } = require('./gluetunManager');
 const { runSpeedtest } = require('./speedTester');
-const { loadResults } = require('./resultsWriter');
+const { loadResults, writeResults } = require('./resultsWriter');
 const { appendServerData, appendRawResult } = require('./rawDataWriter');
 const { pauseAll, resumeAll } = require('./qbtClient');
+
+const SECONDS_BETWEEN_RUNS = 10;
 
 function getESTTimestamp() {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -28,9 +30,8 @@ async function runCycle(results) {
 
   if (!server) {
     logger.info('All servers covered — resetting coverage and restarting cycle');
-    Object.keys(results).forEach(k => {
-      results[k].tiers = { low: [], medium: [], high: [], diablo: [] };
-    });
+    results.splice(0, results.length);
+    await writeResults(results);
     server = pickNextServer(liveServers, results);
   }
 
@@ -39,28 +40,31 @@ async function runCycle(results) {
   const serverName = server.public_name;
   logger.info(`CYCLE: ${serverName} | ${server.tier} | ${server.currentload}% | ${server.location}`);
 
-  await switchServer(serverName);
-  const timestamp = getESTTimestamp();
-  await appendServerData(timestamp, server);
+  try {
+    await switchServer(serverName);
+    const timestamp = getESTTimestamp();
+    await appendServerData(timestamp, server);
 
-  for (let i = 1; i <= 3; i++) {
-    const raw = await runSpeedtest();
-    await appendRawResult(`${timestamp}_${i}-3`, raw);
-    const dl = (raw.download / 1_000_000).toFixed(2);
-    const ul = (raw.upload / 1_000_000).toFixed(2);
-    logger.info(`RUN ${i}/3: ↓${dl} Mbps ↑${ul} Mbps`);
-    if (i < 3) await new Promise(r => setTimeout(r, 15000));
-  }
+    for (let i = 1; i <= 3; i++) {
+      const raw = await runSpeedtest();
+      await appendRawResult(`${timestamp}_${i}-3`, raw);
+      const dl = (raw.download / 1_000_000).toFixed(2);
+      const ul = (raw.upload / 1_000_000).toFixed(2);
+      logger.info(`RUN ${i}/3: ↓${dl} Mbps ↑${ul} Mbps`);
+      if (i < 3) await new Promise(r => setTimeout(r, SECONDS_BETWEEN_RUNS * 1000));
+    }
 
-  if (!results[serverName]) {
-    results[serverName] = { tiers: { low: [], medium: [], high: [], diablo: [] } };
+    results.push({ server_name: serverName, tier: server.tier, timestamp, run_count: 3 });
+    await writeResults(results);
+    return serverName;
+  } finally {
+    await tearDownTestContainers();
   }
-  results[serverName].tiers[server.tier].push({ session_id: timestamp });
-  return serverName;
 }
 
 (async () => {
   await pauseAll();
+  await captureBaseConfig();
   const results = await loadResults();
   let consecutiveFailures = 0;
   logger.info('=== test:infinite START ===');
@@ -80,7 +84,8 @@ async function runCycle(results) {
       }
     }
   } finally {
-    await stopGluetun();
+    await tearDownTestContainers();
+    await restoreBaseContainers();
     await resumeAll();
   }
 

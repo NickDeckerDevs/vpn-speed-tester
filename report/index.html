@@ -574,13 +574,112 @@ function stopWatch() {
   updateStatus(`Stopped watching at ${new Date().toUTCString()}`);
 }
 
+// ── Data join helpers ──────────────────────────────────────────
+function buildServerEntry(server_name, meta) {
+  return {
+    server_name,
+    city: meta.location || server_name,
+    distance_from_cape_coral_km: meta.distance_km ?? null,
+    tiers: { low: [], medium: [], high: [], diablo: [] },
+  };
+}
+
+function buildRun(i, raw, meta) {
+  return {
+    run:            i,
+    test_timestamp: raw.timestamp || null,
+    download_mbps:  parseFloat((raw.download / 1_000_000).toFixed(2)),
+    upload_mbps:    parseFloat((raw.upload   / 1_000_000).toFixed(2)),
+    ping_ms:        parseFloat(raw.ping.toFixed(2)),
+    jitter_ms:      null,
+    status_snapshot: {
+      currentload:             meta.currentload ?? null,
+      available_capacity_mbps: meta.available_capacity_mbps ?? null,
+    },
+  };
+}
+
+function buildRuns(timestamp, run_count, rawResults, meta) {
+  const runs = [];
+  for (let i = 1; i <= run_count; i++) {
+    const raw = rawResults[`${timestamp}_${i}-${run_count}`];
+    if (raw) runs.push(buildRun(i, raw, meta));
+  }
+  return runs;
+}
+
+function turnSessionIdIntoDateTime(sessionId) {
+  const s = String(sessionId);
+  const month = s.slice(4, 6);
+  const day   = s.slice(6, 8);
+  const year  = s.slice(2, 4);
+  const hour  = s.slice(8, 10);
+  const min   = s.slice(10, 12);
+  return `${month}/${day}/${year} ${hour}:${min}`;
+}
+
+function buildSession(timestamp, meta, runs) {
+  return {
+    session_id:              timestamp,
+    session_start:           timestamp,
+    status_at_session_start: {
+      currentload:             meta.currentload             ?? null,
+      available_capacity_mbps: meta.available_capacity_mbps ?? null,
+      users:                   meta.users                   ?? null,
+      bw:                      meta.bw                      ?? null,
+      bw_max:                  meta.bw_max                  ?? null,
+      health:                  meta.health                  ?? null,
+    },
+    averages: calcAverages(runs),
+    runs,
+  };
+}
+
+function buildResults(sessionsList, serverData, rawResults) {
+  const out = {};
+  for (const { server_name, tier, timestamp, run_count } of sessionsList) {
+    const meta = serverData[timestamp] || {};
+    if (!out[server_name]) out[server_name] = buildServerEntry(server_name, meta);
+    const runs = buildRuns(timestamp, run_count, rawResults, meta);
+    out[server_name].tiers[tier].push(buildSession(timestamp, meta, runs));
+  }
+  return out;
+}
+
+function calcAverages(runs) {
+  if (!runs.length) return null;
+  const n = runs.length;
+  const dl = runs.reduce((s, r) => s + r.download_mbps, 0) / n;
+  const ul = runs.reduce((s, r) => s + r.upload_mbps,   0) / n;
+  const pg = runs.reduce((s, r) => s + r.ping_ms,        0) / n;
+  const available = runs[runs.length - 1]?.status_snapshot?.available_capacity_mbps;
+  return {
+    download_mbps:          parseFloat(dl.toFixed(2)),
+    upload_mbps:            parseFloat(ul.toFixed(2)),
+    ping_ms:                parseFloat(pg.toFixed(2)),
+    jitter_ms:              null,
+    speed_efficiency_ratio: available ? parseFloat((dl / available).toFixed(3)) : null,
+  };
+}
+
 // ── Data loading ───────────────────────────────────────────────
 async function loadData() {
-  // Results
+  let sessionsList = [], serverData = {}, rawResults = {};
+
   try {
-    const r = await fetch('../results.json');
-    if (r.ok) results = await r.json();
+    const r = await fetch('../data/results.json');
+    if (r.ok) { sessionsList = await r.json(); if (!Array.isArray(sessionsList)) sessionsList = []; }
   } catch { /* no data yet */ }
+  try {
+    const r = await fetch('../data/server-data.json');
+    if (r.ok) serverData = await r.json();
+  } catch { /* no data yet */ }
+  try {
+    const r = await fetch('../data/raw-results.json');
+    if (r.ok) rawResults = await r.json();
+  } catch { /* no data yet */ }
+
+  results = buildResults(sessionsList, serverData, rawResults);
 
   // Snapshot index then individual files
   try {
@@ -865,39 +964,54 @@ function renderDrilldown() {
       if (!tierSessions.length) continue;
 
       for (const session of tierSessions) {
+        console.log(session)
         const avg = session.averages;
+        const snap = session.status_at_session_start;
         const sessionEl = document.createElement('details');
         sessionEl.style.marginBottom = '4px';
+
+        const runCount = (session.runs || []).length;
+        const avgSummary = avg
+          ? `↓${fmt1(avg.download_mbps)} ↑${fmt1(avg.upload_mbps)} ${fmt1(avg.ping_ms)}ms`
+          : '—';
+
+        const snapBar = [
+          snap.currentload             != null ? `Load: ${snap.currentload}%`                              : null,
+          snap.users                   != null ? `Users: ${snap.users}`                                    : null,
+          snap.available_capacity_mbps != null ? `Available: ${snap.available_capacity_mbps} Mbps`         : null,
+          (snap.bw != null && snap.bw_max != null) ? `BW: ${snap.bw} / ${snap.bw_max} Mbps`              : null,
+          snap.health                  != null ? `Health: ${snap.health}`                                  : null,
+        ].filter(Boolean).join('  ·  ');
+
+        const runsHtml = (session.runs || []).map(r => {
+          const ts = r.test_timestamp
+            ? r.test_timestamp.slice(0, 19).replace('T', ' ') + ' UTC'
+            : `Run ${r.run}`;
+          return `
+            <div style="border:1px solid #1e293b;border-radius:6px;padding:8px 10px;margin-bottom:6px">
+              <div style="font-size:11px;color:#64748b;margin-bottom:6px">Run ${r.run}  —  ${ts}</div>
+              <div style="display:grid;grid-template-columns:repeat(5,auto);gap:12px 24px;font-size:12px;color:#94a3b8">
+                <span>↓ ${fmt1(r.download_mbps)} Mbps</span>
+                <span>↑ ${fmt1(r.upload_mbps)} Mbps</span>
+                <span>⌛ ${fmt1(r.ping_ms)} ms</span>
+                <span>Load: ${r.status_snapshot?.currentload ?? '?'}%</span>
+                <span>Avail: ${r.status_snapshot?.available_capacity_mbps ?? '?'} Mbps</span>
+              </div>
+            </div>
+          `;
+        }).join('');
 
         sessionEl.innerHTML = `
           <summary style="font-size:12px;padding:6px 8px">
             ${tierPill(tier)}
             <span style="margin-left:8px;color:#94a3b8">${session.session_id}</span>
-            <span style="margin-left:auto;color:#64748b">${session.session_start?.slice(0,16).replace('T',' ')} UTC</span>
-            ${avg ? `<span style="margin-left:12px;font-weight:500">${fmt1(avg.download_mbps)} Mbps ↓</span>` : ''}
+            <span style="margin-left:6px;color:#64748b">${turnSessionIdIntoDateTime(session.session_id)}</span>
+            <span style="margin-left:auto;color:#64748b;margin-right:12px">${avgSummary}</span>
+            <span style="color:#4b5563">${runCount} run${runCount !== 1 ? 's' : ''}</span>
           </summary>
-          <div style="padding:8px 12px;background:#0f1117;font-size:12px">
-            ${avg ? `
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;color:#94a3b8">
-                <span>↓ ${fmt1(avg.download_mbps)} Mbps</span>
-                <span>↑ ${fmt1(avg.upload_mbps)} Mbps</span>
-                <span>${fmt1(avg.ping_ms)} ms ping</span>
-                <span>${fmt2(avg.jitter_ms)} ms jitter</span>
-              </div>
-            ` : ''}
-            <div class="run-row" style="color:#4b5563;font-size:11px">
-              <span>#</span><span>Download</span><span>Upload</span><span>Ping</span><span>Jitter</span><span>Load</span>
-            </div>
-            ${(session.runs || []).map(r => `
-              <div class="run-row">
-                <span>${r.run}</span>
-                <span>${fmt1(r.download_mbps)} Mbps</span>
-                <span>${fmt1(r.upload_mbps)} Mbps</span>
-                <span>${fmt1(r.ping_ms)} ms</span>
-                <span>${fmt2(r.jitter_ms)} ms</span>
-                <span>${r.status_snapshot?.currentload ?? '?'}%</span>
-              </div>
-            `).join('')}
+          <div style="padding:10px 12px;background:#0f1117;font-size:12px">
+            ${snapBar ? `<div style="color:#64748b;margin-bottom:10px;font-size:11px">${snapBar}</div>` : ''}
+            ${runsHtml}
           </div>
         `;
 

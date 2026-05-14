@@ -75,9 +75,7 @@ All workflows go through these shell scripts at the repo root (run from your lap
 
 - `./deploy.sh` — rsync repo to NAS, `docker compose down`, `up -d --build`. Reads `.env` and validates required vars. **This is the only way to "run" the code.**
 - `./deploy.sh --check` — show live container status on the NAS, no deploy.
-- `./view-data.sh [report|summary|servers|json|logs|sync]` — pull report/data from NAS. `report` (default) opens `report/index.html` in browser.
-- `./view-report.sh` — shortcut for `view-data.sh report`.
-- `./export-summary.sh` — generate a summary export.
+- `./view-report.sh` — open `report/index.html` from the NAS in browser.
 
 Inside the orchestrator container (rarely needed directly — `docker exec orchestrator ...`):
 - `npm start` — scheduled cron mode (the default Docker CMD).
@@ -104,7 +102,7 @@ Four containers defined in [docker-compose.yml](docker-compose.yml), all on the 
    - Fetch live AirVPN US server list from `https://airvpn.org/api/status` ([airvpnStatus.js](orchestrator/airvpnStatus.js)) — also classifies each server into `low`/`medium`/`high`/`diablo` by current load (thresholds in [config.js](orchestrator/config.js)).
    - Pick a server via [queueBuilder.js](orchestrator/queueBuilder.js): prefer servers missing coverage in their current tier, then fewest total sessions, then oldest last-tested.
    - `switchServer(name)` ([gluetunManager.js](orchestrator/gluetunManager.js)): tear down speedtest-runner → tear down gluetun → recreate gluetun with new `SERVER_NAMES` → poll gluetun control API until tunnel is up (`waitForTunnel`, up to 3 retries) → recreate speedtest-runner with `NetworkMode: container:<new-gluetun-id>`.
-   - Run `speedtest-cli --json --secure` inside speedtest-runner three times, 15 s apart ([speedTester.js](orchestrator/speedTester.js)).
+   - Run `speedtest-cli --json --secure` inside speedtest-runner three times, 10 s apart ([speedTester.js](orchestrator/speedTester.js)).
    - Append raw output to `raw-results.json` and `server-data.json` ([rawDataWriter.js](orchestrator/rawDataWriter.js)); aggregated `results.json` is recomputed by [aggregator.js](orchestrator/aggregator.js) / [resultsWriter.js](orchestrator/resultsWriter.js).
 3. Stop gluetun + speedtest-runner; resume qBittorrent.
 
@@ -113,12 +111,12 @@ Also registered: `cron.schedule('30 * * * *', writeHourlySnapshot)` ([snapshotWr
 ### Failure handling subtleties
 
 - **Tunnel failures** (`gluetun-speedtest exited`, `Tunnel failed after N attempts`, container 404) are treated as *transient*: log a SESSION SKIP and continue to the next server. They do **not** increment `consecutiveFailures`.
-- **Other errors** increment `consecutiveFailures`. After 2, or on a `network namespace` 500 from the docker socket, the whole window aborts via `break`.
+- **Other errors** increment `consecutiveFailures`. After 5 (`MAX_CONSECUTIVE_FAILURES`), or on a `network namespace` 500 from the docker socket, the whole window aborts via `break`.
 - Tunnel polling: `waitForTunnel` inspects the gluetun container first — if it has exited, fail fast rather than waiting for the 180 s HTTP timeout.
 
 ### Data files (on NAS at `/volume1/Docker/vpn-speed-tester/data/`)
 
-- `results.json` — aggregated, per-server, per-tier sessions with averages. This is what the report renders.
+- `results.json` — flat array of session records (`{ server_name, tier, timestamp, run_count }`). This is what the report renders.
 - `raw-results.json` — every individual `speedtest-cli` JSON keyed by `{timestamp}_{run}-{total}`.
 - `server-data.json` — AirVPN status snapshot at the moment each session began.
 - `snapshots/` — hourly AirVPN status dumps.

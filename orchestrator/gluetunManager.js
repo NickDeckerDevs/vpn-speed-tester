@@ -26,6 +26,12 @@ const config = require('./config');
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
+const GLUETUN_TUNNEL_CHECK_DELAY_TIME = 6000; // ms to wait before first tunnel poll (avoids guaranteed ECONNREFUSED on startup)
+
+let _baseGluetunInfo = null;
+let _baseSpeedtestImage = null;
+let _baseSpeedtestBinds = null;
+
 async function getOrchestratorImage() {
   const orch = docker.getContainer('orchestrator');
   const info = await orch.inspect();
@@ -100,7 +106,7 @@ async function startGluetunTunnel(serverName, gluetunContainerInfo, newEnv, maxA
         Image: gluetunContainerInfo.Config.Image,
         Env: newEnv,
         ExposedPorts: gluetunContainerInfo.Config.ExposedPorts,
-        HostConfig: gluetunContainerInfo.HostConfig,
+        HostConfig: { ...gluetunContainerInfo.HostConfig, RestartPolicy: { Name: '' } },
       });
       await newGluetun.start();
     } catch (err) {
@@ -124,7 +130,7 @@ async function startGluetunTunnel(serverName, gluetunContainerInfo, newEnv, maxA
 }
 
 // Creates, starts, and polls speedtest-runner until it is running (max 30s).
-async function startSpeedtestContainer(image, binds, gluetunId) {
+async function startSpeedtestContainer(image, binds, gluetunId, restartPolicy = { Name: '' }) {
   logger.fn(__filename, 'startSpeedtestContainer()', { image, gluetunId });
   const newSpeedtest = await docker.createContainer({
     name: config.SPEEDTEST_CONTAINER,
@@ -134,7 +140,7 @@ async function startSpeedtestContainer(image, binds, gluetunId) {
     HostConfig: {
       Binds: binds,
       NetworkMode: `container:${gluetunId}`,
-      RestartPolicy: { Name: '' },
+      RestartPolicy: restartPolicy,
     },
   });
   await newSpeedtest.start();
@@ -162,16 +168,36 @@ async function startSpeedtestContainer(image, binds, gluetunId) {
   return newSpeedtest;
 }
 
+async function captureBaseConfig() {
+  try {
+    _baseGluetunInfo = await docker.getContainer(config.GLUETUN_CONTAINER).inspect();
+    logger.info('captureBaseConfig: gluetun base config cached');
+  } catch (err) {
+    logger.warn(`captureBaseConfig: gluetun inspect failed — ${err.message}`);
+  }
+  try {
+    const si = await docker.getContainer(config.SPEEDTEST_CONTAINER).inspect();
+    _baseSpeedtestImage = si.Config.Image;
+    _baseSpeedtestBinds = si.HostConfig.Binds;
+    logger.info('captureBaseConfig: speedtest base config cached');
+  } catch (err) {
+    logger.warn(`captureBaseConfig: speedtest inspect failed — ${err.message}`);
+  }
+}
+
 async function switchServer(serverName) {
   logger.fn(__filename, 'switchServer()', { serverName });
 
-  const { containerInfo: speedTestInfo } = await tearDown(serverName, config.SPEEDTEST_CONTAINER, true);
-  const { containerInfo: gluetunInfo, newEnv } = await tearDown(serverName, config.GLUETUN_CONTAINER, false);
+  await tearDown(serverName, config.SPEEDTEST_CONTAINER, true);
+  await tearDown(serverName, config.GLUETUN_CONTAINER, true);
 
-  const newGluetun = await startGluetunTunnel(serverName, gluetunInfo, newEnv);
+  if (!_baseGluetunInfo) throw new Error('switchServer: captureBaseConfig() was not called before first switch');
 
-  const image = speedTestInfo?.Config.Image ?? await getOrchestratorImage();
-  const binds = speedTestInfo?.HostConfig.Binds ?? ['/volume1/Docker/vpn-speed-tester/data:/data'];
+  const newEnv = getEnv(_baseGluetunInfo.Config.Env || [], serverName);
+  const newGluetun = await startGluetunTunnel(serverName, _baseGluetunInfo, newEnv);
+
+  const image = _baseSpeedtestImage ?? await getOrchestratorImage();
+  const binds = _baseSpeedtestBinds ?? ['/volume1/Docker/vpn-speed-tester/data:/data'];
   await startSpeedtestContainer(image, binds, newGluetun.id);
 }
 
@@ -206,6 +232,8 @@ async function ensureSpeedtestRunner() {
 
 async function waitForTunnel() {
   logger.fn(__filename, 'waitForTunnel()', { timeoutMs: config.TUNNEL_TIMEOUT_MS });
+
+  await new Promise(r => setTimeout(r, GLUETUN_TUNNEL_CHECK_DELAY_TIME));
 
   const deadline = Date.now() + config.TUNNEL_TIMEOUT_MS;
   let attempt = 0;
@@ -248,8 +276,8 @@ async function waitForTunnel() {
   throw new Error(`Tunnel not established after ${config.TUNNEL_TIMEOUT_MS / 1000}s (${attempt} attempts)`);
 }
 
-async function stopGluetun() {
-  logger.fn(__filename, 'stopGluetun()', null);
+async function tearDownTestContainers() {
+  logger.fn(__filename, 'tearDownTestContainers()', null);
   await tearDown(null, config.SPEEDTEST_CONTAINER, true);
   await tearDown(null, config.GLUETUN_CONTAINER, true);
 }
@@ -281,4 +309,36 @@ async function getAcceptedServers() {
   return names;
 }
 
-module.exports = { switchServer, waitForTunnel, stopGluetun, ensureSpeedtestRunner, getAcceptedServers };
+async function restoreBaseContainers() {
+  logger.fn(__filename, 'restoreBaseContainers()', null);
+  if (!_baseGluetunInfo) {
+    logger.warn('restoreBaseContainers: no base config cached — skipping restore');
+    return;
+  }
+  let newGluetun;
+  try {
+    newGluetun = await docker.createContainer({
+      name: config.GLUETUN_CONTAINER,
+      Image: _baseGluetunInfo.Config.Image,
+      Env: _baseGluetunInfo.Config.Env,
+      ExposedPorts: _baseGluetunInfo.Config.ExposedPorts,
+      HostConfig: _baseGluetunInfo.HostConfig,
+    });
+    await newGluetun.start();
+    logger.info('restoreBaseContainers: gluetun-speedtest started');
+  } catch (err) {
+    logger.warn(`restoreBaseContainers: gluetun recreate failed — ${err.message}`);
+    return;
+  }
+  await new Promise(r => setTimeout(r, 2000));
+  try {
+    const image = _baseSpeedtestImage ?? await getOrchestratorImage();
+    const binds = _baseSpeedtestBinds ?? ['/volume1/Docker/vpn-speed-tester/data:/data'];
+    await startSpeedtestContainer(image, binds, newGluetun.id, { Name: 'unless-stopped' });
+    logger.info('restoreBaseContainers: speedtest-runner started');
+  } catch (err) {
+    logger.warn(`restoreBaseContainers: speedtest-runner recreate failed — ${err.message}`);
+  }
+}
+
+module.exports = { switchServer, waitForTunnel, tearDownTestContainers, restoreBaseContainers, ensureSpeedtestRunner, captureBaseConfig, getAcceptedServers };
