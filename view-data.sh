@@ -1,12 +1,23 @@
 #!/bin/bash
-
-# View speed test results from NAS
+# view-data.sh — Multi-command utility to inspect VPN speed-test results.
+#
+# Subcommands: report (default, opens HTML in browser), summary, json, servers,
+# logs, sync, help. The "report" subcommand is functionally identical to
+# view-report.sh — that script is kept as a convenience alias.
+#
+# TODO (future): sync_report() and the browser-open logic here are near-duplicated
+# in view-report.sh. NAS connection vars (NAS, NAS_DIR, SSH, rsync -e string) are
+# also duplicated across deploy.sh, export-summary.sh, view-data.sh, view-report.sh,
+# and test-manual.sh. Extract to a shared lib.sh sourced by each script.
+#
+# Changelog
+# 2026-05-14  Switched SSH and rsync from password-only to key-based auth (id_nas)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAS="sysop@10.1.10.254"
 NAS_DIR="/volume1/Docker/vpn-speed-tester/data"
-SSH="ssh -p 8322 $NAS"
+SSH="ssh -i $HOME/.ssh/id_nas -p 8322 $NAS"
 
 show_usage() {
   cat << 'EOF'
@@ -31,7 +42,7 @@ EOF
 
 sync_report() {
   echo "📥 Pulling latest report from NAS..."
-  rsync -avz -e "ssh -p 8322" \
+  rsync -avz -e "ssh -i $HOME/.ssh/id_nas -p 8322" \
     --delete \
     "$NAS:${NAS_DIR%/data}/report/" \
     "$SCRIPT_DIR/report/" > /dev/null 2>&1
