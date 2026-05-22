@@ -25,6 +25,9 @@ module.exports = {
   TUNNEL_POLL_MS:       5000,
   TUNNEL_TIMEOUT_MS:    180000,
 
+  DATA_BIND:                '/volume1/Docker/vpn-speed-tester/data:/data',
+  MAX_CONSECUTIVE_FAILURES:  3,
+
   TIER_THRESHOLDS: {
     low:    { min: 0,  max: 30  },
     medium: { min: 31, max: 50  },
