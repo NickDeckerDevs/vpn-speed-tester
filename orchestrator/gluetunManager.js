@@ -18,51 +18,132 @@ async function getOrchestratorImage() {
   return info.Config.Image;
 }
 
-function processCatchError(err, context = '', ignoreError = true) {
+// Logs all containers (running + stopped) with name, state, and created time in EST.
+async function logContainerStatus() {
+  try {
+    const containers = await docker.listContainers({ all: true });
+    for (const c of containers) {
+      const name = (c.Names[0] || '').replace(/^\//, '');
+      const created = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        month: '2-digit', day: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: true,
+      }).format(new Date(c.Created * 1000));
+      logger.info(`[container-status] ${name.padEnd(24)} | ${c.State.padEnd(8)} | created: ${created} EST`);
+    }
+  } catch (err) {
+    logger.warn(`logContainerStatus: failed — ${err.message}`);
+  }
+}
+
+// Logs the error, pulls container logs if containerName is given, then dumps container status.
+async function logDockerError(context, err, containerName) {
   const code = err.statusCode ? ` [${err.statusCode}]` : '';
   logger.error(`${context}${code}: ${err.message}`);
-  if (!ignoreError) throw err;
+  if (containerName) {
+    try {
+      const raw = await docker.getContainer(containerName).logs({
+        stdout: true, stderr: true, tail: 20,
+      });
+      // Docker multiplexes stdout/stderr — strip the 8-byte header from each frame
+      const text = raw.toString('utf8')
+        .split('\n')
+        .map(line => line.length > 8 ? line.slice(8) : line)
+        .filter(Boolean)
+        .join(' | ');
+      if (text) logger.error(`[${containerName} logs] ${text}`);
+    } catch (_) {}
+  }
+  await logContainerStatus();
 }
 
 const getEnv = (gluetunEnv, serverName) =>
   gluetunEnv.filter(e => !e.startsWith('SERVER_NAMES='))
     .concat(`SERVER_NAMES=${serverName}`);
 
-// Stops and removes a container. If skipEnvRebuild=false, also computes updated
-// SERVER_NAMES env for the gluetun container so the caller can recreate it.
-// Returns { containerInfo, newEnv }.
-async function tearDown(serverName, dockerContainerName, skipEnvRebuild) {
-  logger.fn(__filename, 'tearDown()', { serverName, dockerContainerName });
-  let dockerContainer = null;
-  let containerInfo = null;
-  let newEnv;
+// Polls until the container is fully gone (404). On timeout, tries force-remove then polls once more.
+async function waitForContainerRemoved(containerName, timeoutMs = 15000) {
+  logger.debug(`waitForContainerRemoved: waiting for ${containerName} to be removed...`);
+  const deadline = Date.now() + timeoutMs;
 
-  try {
-    dockerContainer = docker.getContainer(dockerContainerName);
-    containerInfo = await dockerContainer.inspect();
-    if (!skipEnvRebuild) {
-      newEnv = getEnv(containerInfo.Config.Env || [], serverName);
+  while (Date.now() < deadline) {
+    try {
+      await docker.getContainer(containerName).inspect();
+    } catch (err) {
+      if (err.statusCode === 404) {
+        logger.debug(`waitForContainerRemoved: ${containerName} confirmed gone`);
+        return;
+      }
+      throw err;
     }
-  } catch (err) {
-    if (err.statusCode !== 404) processCatchError(err, `tearDown: inspect ${dockerContainerName}`, false);
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  if (containerInfo) {
+  logger.warn(`waitForContainerRemoved: ${containerName} still present after ${timeoutMs / 1000}s — attempting force remove`);
+  await logContainerStatus();
+
+  try {
+    await docker.getContainer(containerName).remove({ force: true });
+  } catch (err) {
+    if (err.statusCode !== 404) logger.warn(`waitForContainerRemoved: force remove failed — ${err.message}`);
+  }
+
+  // One final poll after force-remove
+  const finalDeadline = Date.now() + 5000;
+  while (Date.now() < finalDeadline) {
+    try {
+      await docker.getContainer(containerName).inspect();
+    } catch (err) {
+      if (err.statusCode === 404) {
+        logger.info(`waitForContainerRemoved: ${containerName} removed after force-remove`);
+        return;
+      }
+      throw err;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  throw new Error(`waitForContainerRemoved: ${containerName} still exists after force-remove`);
+}
+
+// Stops and removes a container, then confirms it is gone before returning.
+async function tearDownDockerContainer(containerName) {
+  logger.fn(__filename, 'tearDownDockerContainer()', { containerName });
+  let dockerContainer = null;
+  let containerFound = false;
+
+  try {
+    dockerContainer = docker.getContainer(containerName);
+    await dockerContainer.inspect();
+    containerFound = true;
+  } catch (err) {
+    if (err.statusCode === 404) {
+      logger.debug(`tearDownDockerContainer: ${containerName} not found — nothing to tear down`);
+      return;
+    }
+    await logDockerError(`tearDownDockerContainer: inspect ${containerName}`, err, containerName);
+    throw err;
+  }
+
+  if (containerFound) {
     try {
       await dockerContainer.stop({ t: 10 });
     } catch (err) {
       if (err.statusCode !== 304 && err.statusCode !== 409) {
-        processCatchError(err, `tearDown: stop ${dockerContainerName}`, false);
+        await logDockerError(`tearDownDockerContainer: stop ${containerName}`, err, containerName);
+        throw err;
       }
     }
     try {
       await dockerContainer.remove();
     } catch (err) {
-      processCatchError(err, `tearDown: remove ${dockerContainerName}`, true);
+      if (err.statusCode !== 404) {
+        await logDockerError(`tearDownDockerContainer: remove ${containerName}`, err, containerName);
+      }
     }
+    await waitForContainerRemoved(containerName);
   }
-
-  return { containerInfo, newEnv };
 }
 
 // Creates and starts the gluetun container, retrying up to maxAttempts times
@@ -89,7 +170,8 @@ async function startGluetunTunnel(serverName, gluetunContainerInfo, newEnv, maxA
       });
       await newGluetun.start();
     } catch (err) {
-      processCatchError(err, `startGluetunTunnel: create/start attempt ${attempt}`, false);
+      await logDockerError(`startGluetunTunnel: create/start attempt ${attempt}`, err, config.GLUETUN_CONTAINER);
+      throw err;
     }
 
     try {
@@ -136,7 +218,10 @@ async function startSpeedtestContainer(image, binds, gluetunId, restartPolicy = 
         throw new Error(`speedtest-runner failed to start (status: ${info.State.Status})`);
       }
     } catch (err) {
-      if (attempt >= 10) processCatchError(err, 'startSpeedtestContainer: inspect poll', false);
+      if (attempt >= 10) {
+        await logDockerError('startSpeedtestContainer: inspect poll', err, config.SPEEDTEST_CONTAINER);
+        throw err;
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
@@ -167,8 +252,8 @@ async function captureBaseConfig() {
 async function switchServer(serverName) {
   logger.fn(__filename, 'switchServer()', { serverName });
 
-  await tearDown(serverName, config.SPEEDTEST_CONTAINER, true);
-  await tearDown(serverName, config.GLUETUN_CONTAINER, true);
+  await tearDownDockerContainer(config.SPEEDTEST_CONTAINER);
+  await tearDownDockerContainer(config.GLUETUN_CONTAINER);
 
   if (!_baseGluetunInfo) throw new Error('switchServer: captureBaseConfig() was not called before first switch');
 
@@ -176,37 +261,38 @@ async function switchServer(serverName) {
   const newGluetun = await startGluetunTunnel(serverName, _baseGluetunInfo, newEnv);
 
   const image = _baseSpeedtestImage ?? await getOrchestratorImage();
-  const binds = _baseSpeedtestBinds ?? ['/volume1/Docker/vpn-speed-tester/data:/data'];
+  const binds = _baseSpeedtestBinds ?? [config.DATA_BIND];
   await startSpeedtestContainer(image, binds, newGluetun.id);
 }
 
-async function ensureSpeedtestRunner() {
-  logger.fn(__filename, 'ensureSpeedtestRunner()', null);
-  const speedtestC = docker.getContainer(config.SPEEDTEST_CONTAINER);
+// Verifies both test containers are running after a switchServer(). Read-only — throws if either is down.
+async function verifyTestContainersRunning() {
+  logger.fn(__filename, 'verifyTestContainersRunning()', null);
+
+  let gluetunOk = false;
+  let speedtestOk = false;
 
   try {
-    const info = await speedtestC.inspect();
-    if (info.State.Running) return;
-    logger.warn(`ensureSpeedtestRunner: container not running — state: ${JSON.stringify(info.State)}`);
-    await speedtestC.remove({ force: true });
+    const info = await docker.getContainer(config.GLUETUN_CONTAINER).inspect();
+    gluetunOk = info.State.Running;
   } catch (err) {
-    if (err.statusCode !== 404) processCatchError(err, 'ensureSpeedtestRunner: inspect', false);
+    await logDockerError('verifyTestContainersRunning: gluetun inspect', err, config.GLUETUN_CONTAINER);
   }
 
-  const gluetunC = docker.getContainer(config.GLUETUN_CONTAINER);
-  let gluetunInfo;
   try {
-    gluetunInfo = await gluetunC.inspect();
+    const info = await docker.getContainer(config.SPEEDTEST_CONTAINER).inspect();
+    speedtestOk = info.State.Running;
   } catch (err) {
-    processCatchError(err, 'ensureSpeedtestRunner: gluetun inspect', false);
+    await logDockerError('verifyTestContainersRunning: speedtest inspect', err, config.SPEEDTEST_CONTAINER);
   }
 
-  if (!gluetunInfo.State.Running) {
-    throw new Error(`Cannot rebuild speedtest-runner: gluetun-speedtest not running (state: ${gluetunInfo.State.Status})`);
-  }
+  await logContainerStatus();
 
-  const image = await getOrchestratorImage();
-  await startSpeedtestContainer(image, ['/volume1/Docker/vpn-speed-tester/data:/data'], gluetunInfo.Id);
+  if (!gluetunOk || !speedtestOk) {
+    throw new Error(
+      `verifyTestContainersRunning: containers not healthy — gluetun=${gluetunOk} speedtest=${speedtestOk}`
+    );
+  }
 }
 
 async function waitForTunnel() {
@@ -226,8 +312,9 @@ async function waitForTunnel() {
       const info = await docker.getContainer(config.GLUETUN_CONTAINER).inspect();
       if (!info.State.Running) {
         const detail = `exitCode=${info.State.ExitCode} status=${info.State.Status} error="${info.State.Error}"`;
-        logger.error(`waitForTunnel: gluetun-speedtest has exited — ${detail}`);
-        throw new Error(`gluetun-speedtest exited (${detail})`);
+        const exitErr = new Error(`gluetun-speedtest exited (${detail})`);
+        await logDockerError('waitForTunnel: gluetun has exited', exitErr, config.GLUETUN_CONTAINER);
+        throw exitErr;
       }
     } catch (err) {
       if (err.statusCode === 404) throw new Error('gluetun-speedtest container not found (404) during tunnel poll');
@@ -255,10 +342,10 @@ async function waitForTunnel() {
   throw new Error(`Tunnel not established after ${config.TUNNEL_TIMEOUT_MS / 1000}s (${attempt} attempts)`);
 }
 
-async function tearDownTestContainers() {
-  logger.fn(__filename, 'tearDownTestContainers()', null);
-  await tearDown(null, config.SPEEDTEST_CONTAINER, true);
-  await tearDown(null, config.GLUETUN_CONTAINER, true);
+async function tearDownSpeedTestingContainers() {
+  logger.fn(__filename, 'tearDownSpeedTestingContainers()', null);
+  await tearDownDockerContainer(config.SPEEDTEST_CONTAINER);
+  await tearDownDockerContainer(config.GLUETUN_CONTAINER);
 }
 
 async function restoreBaseContainers() {
@@ -267,30 +354,35 @@ async function restoreBaseContainers() {
     logger.warn('restoreBaseContainers: no base config cached — skipping restore');
     return;
   }
+
+  await tearDownDockerContainer(config.SPEEDTEST_CONTAINER);
+  await tearDownDockerContainer(config.GLUETUN_CONTAINER);
+
   let newGluetun;
   try {
-    newGluetun = await docker.createContainer({
-      name: config.GLUETUN_CONTAINER,
-      Image: _baseGluetunInfo.Config.Image,
-      Env: _baseGluetunInfo.Config.Env,
-      ExposedPorts: _baseGluetunInfo.Config.ExposedPorts,
-      HostConfig: _baseGluetunInfo.HostConfig,
-    });
-    await newGluetun.start();
-    logger.info('restoreBaseContainers: gluetun-speedtest started');
+    newGluetun = await startGluetunTunnel('restore', _baseGluetunInfo, _baseGluetunInfo.Config.Env);
+    logger.info('restoreBaseContainers: gluetun-speedtest started and tunnel confirmed');
   } catch (err) {
-    logger.warn(`restoreBaseContainers: gluetun recreate failed — ${err.message}`);
+    logger.warn(`restoreBaseContainers: gluetun start failed — ${err.message}`);
     return;
   }
-  await new Promise(r => setTimeout(r, 2000));
+
   try {
     const image = _baseSpeedtestImage ?? await getOrchestratorImage();
-    const binds = _baseSpeedtestBinds ?? ['/volume1/Docker/vpn-speed-tester/data:/data'];
+    const binds = _baseSpeedtestBinds ?? [config.DATA_BIND];
     await startSpeedtestContainer(image, binds, newGluetun.id, { Name: 'unless-stopped' });
     logger.info('restoreBaseContainers: speedtest-runner started');
   } catch (err) {
-    logger.warn(`restoreBaseContainers: speedtest-runner recreate failed — ${err.message}`);
+    logger.warn(`restoreBaseContainers: speedtest-runner start failed — ${err.message}`);
   }
 }
 
-module.exports = { switchServer, waitForTunnel, tearDownTestContainers, restoreBaseContainers, ensureSpeedtestRunner, captureBaseConfig };
+module.exports = {
+  switchServer,
+  waitForTunnel,
+  tearDownSpeedTestingContainers,
+  restoreBaseContainers,
+  verifyTestContainersRunning,
+  captureBaseConfig,
+  logContainerStatus,
+};

@@ -1,0 +1,260 @@
+#
+# Unified Docker Compose for Media Stack and Speedtest Tracker
+#
+# Image versions are pinned — to update a single service, change its tag,
+# commit with the old tag in the message so you can roll back, then redeploy.
+#
+version: "3" # 2.4
+
+services:
+  caddy:
+    image: slothcroissant/caddy-cloudflaredns:latest
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - BASE_DOMAIN=${BASE_DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    volumes:
+      - /volume1/Docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /volume1/Docker/caddy/data:/data
+      - /volume1/Docker/caddy/config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - media-lan
+
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.1
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    healthcheck:
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+    ports:
+      - 32459:32459 # airvpn port
+      - 32459:32459/udp # airvpn port
+      - 8080:8080 # qbittorrent web interface
+      - 6881:6881 # qbittorrent torrent port
+      - 6789:6789 # nzbget NOT USED ATM
+      - 8787:80   # Speedtest-tracker
+      - 7878:7878 # Radarr
+      - 8686:8686 # Lidarr
+      - 8989:8989 # Sonarr
+      - 9696:9696 # Prowlarr
+      - 8191:8191 # Byparr (FlareSolverr replacement)
+    environment:
+      - DNS_SERVERS=1.1.1.1,8.8.8.8  # Use faster DNS servers
+      - EXTRA_ROUTES=10.1.10.0/24
+      - FIREWALL_LOCAL_NETWORK_ACCESS=true
+      - FIREWALL_OUTGOING_PORTS=8096
+      - DNS_IPV6=false  # Disable IPv6 if not needed
+      - SERVER_COUNTRIES="United States"
+      - SERVER_CITIES="Miami, Atlanta, New York"
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=10.129.178.159/32
+      - FIREWALL_VPN_INPUT_PORTS=32460
+    volumes:
+      - /volume1/Docker/gluetun:/gluetun
+    networks:
+      media-vpn:
+        ipv4_address: 172.20.0.2
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.1.4-r2-ls448
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - WEBUI_PORT=8080
+    volumes:
+      - /volume1/Docker/qbittorrent:/config
+      - /volume2/data:/data
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:6.1.1.10360-ls298
+    container_name: radarr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/radarr:/config
+      - /volume2/data:/data
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:4.0.17.2952-ls306
+    container_name: sonarr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/sonarr:/config
+      - /volume2/data:/data
+    restart: unless-stopped
+
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:3.1.0.4875-ls23
+    container_name: lidarr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/lidarr:/config
+      - /volume2/data:/data
+    restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls141
+    container_name: prowlarr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/prowlarr:/config
+      - /volume2/data:/data
+    restart: unless-stopped
+
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest # v2.1.0 — ghcr.io requires auth for versioned tags
+    container_name: byparr
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - TZ=America/New_York
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
+  speedtest-tracker:
+    image: lscr.io/linuxserver/speedtest-tracker:v1.13.12-ls144
+    container_name: speedtest-tracker
+    network_mode: "service:gluetun" # Attached to the main VPN container
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - OOKLA_EULA_GDPR=true
+      - APP_KEY=${SPEEDTEST_APP_KEY}
+    volumes:
+      - /volume1/Docker/speedtest-tracker:/config
+    restart: unless-stopped
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:10.11.8ubu2404-ls27
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/jellyfin:/config
+      - /volume2/data/media:/data/media
+    ports:
+      - "8096:8096"
+    restart: unless-stopped
+    networks:
+      - media-lan
+      - media-vpn
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.4.1
+    container_name: homeassistant
+    volumes:
+      - /volume1/Docker/homeassistant:/config
+    network_mode: host
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - /volume1/Docker/mosquitto:/mosquitto
+      - /volume1/Docker/mosquitto/config:/mosquitto/config
+    networks:
+      - media-lan
+    restart: unless-stopped
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt:latest
+    container_name: zigbee2mqtt
+    privileged: true
+    devices:
+      - /dev/bus/usb/001/003:/dev/bus/usb/001/003
+    volumes:
+      - /volume1/Docker/zigbee2mqtt:/app/data
+    ports:
+      - "8888:8080"
+    environment:
+      - TZ=America/New_York
+      - ZIGBEE_SERIAL_PORT=/dev/bus/usb/001/003
+    networks:
+      - media-lan
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  filebrowser:
+    image: filebrowser/filebrowser:v2.63.1
+    container_name: filebrowser
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /volume2/data:/srv
+      - /volume1/Docker/filebrowser:/config
+      - /volume1/Docker/filebrowser_db:/database
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+    networks:
+      - media-lan
+
+networks:
+  media-vpn:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  media-lan:
+    driver: bridge
