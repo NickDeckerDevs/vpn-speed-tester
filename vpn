@@ -335,8 +335,11 @@ cmd_fetch() {
   [ "$with_logs" = true ] && echo "(including logs/ — large)"
 
   # Which of the wanted paths actually exist on the NAS? (missing ones skipped)
+  # NOTE: sh, not bash — the ASUSTOR NAS is busybox-only (no bash). `|| true` so a
+  # detection failure falls through to the friendly error below instead of being
+  # silently killed by `set -e`.
   local existing
-  existing=$($SSH "$SUDO bash -c $(printf '%q' "cd '$remote' && for p in ${paths[*]}; do [ -e \"\$p\" ] && echo \"\$p\"; done")" 2>/dev/null)
+  existing=$($SSH "$SUDO sh -c $(printf '%q' "cd '$remote' && for p in ${paths[*]}; do [ -e \"\$p\" ] && echo \"\$p\"; done")" 2>/dev/null) || true
   [ -z "$existing" ] && { echo "ERROR: no data files found at $remote"; exit 1; }
   echo "Found:"; echo "$existing" | sed 's/^/  - /'
 
