@@ -1,0 +1,79 @@
+services:
+
+  gluetun-speedtest:
+    image: qmcgaw/gluetun:v3.41.1
+    container_name: gluetun-speedtest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=United States
+      - SERVER_NAMES=${SERVER_NAMES:-Aladfar}
+      - DNS_SERVERS=1.1.1.1,8.8.8.8
+      - EXTRA_ROUTES=10.1.10.0/24
+      - FIREWALL_LOCAL_NETWORK_ACCESS=true
+      - DNS_IPV6=false
+      - TZ=America/New_York
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/gluetun-speedtest:/gluetun
+    networks:
+      - vpn-speedtest
+    restart: unless-stopped
+    healthcheck:
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+
+  speedtest-runner:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: speedtest-runner
+    network_mode: "service:gluetun-speedtest"
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/data:/data
+    restart: unless-stopped
+    entrypoint: []
+    command: sleep infinity
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    env_file: .env
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/orchestrator:/config
+      - /volume1/Docker/vpn-speed-tester/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=America/New_York
+    networks:
+      - vpn-speedtest
+    restart: unless-stopped
+
+  report-server:
+    image: nginx:alpine
+    container_name: vpn-report
+    ports:
+      - "9191:80"
+    volumes:
+      - /volume1/Docker/vpn-speed-tester/data:/usr/share/nginx/html:ro
+    networks:
+      - vpn-speedtest
+    restart: unless-stopped
+
+networks:
+  vpn-speedtest:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24

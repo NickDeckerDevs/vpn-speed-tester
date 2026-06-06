@@ -1,311 +1,98 @@
 # Roadmap — Working Document
 
-**Project:** AirVPN Speed Tester  
-**Last Updated:** May 2026  
-**Phase 1 Status:** Complete — scaffold built, all pre-flight bugs fixed, deploy flow hardened, docs current
+**Project:** AirVPN Speed Tester
+**Last Updated:** 2026-06-05
+**Phase 1 Status:** ✅ Complete — built, deployed, and collecting data on the NAS since 2026-05-08.
 
-This is a living document. Check items off as they're completed. Update it when priorities shift or new ideas surface.
-
----
-
-## Session Complete — 2026-05-07
-
-All planned pre-deploy work is done:
-
-- `deploy.sh` — validates all 7 `.env` vars before syncing; polls until containers are gone after teardown; `--test` flag removed ✅
-- `orchestrator/config.js` — `QBT_BASE_URL` fallback removed; startup guard throws on missing `QBT_BASE_URL` or `QBT_PASSWORD` ✅
-- `.env.example` — `SYSOP_SSH` documented; `QBT_BASE_URL` has real example format; all vars have inline comments ✅
-- `documentation/verified-completed-historical-only/` — `fix-queue-and-startup-logic.md`, `qbittorrent-auth-debug.md`, `initial-build-report.md` archived ✅
-- `documentation/get-started-keep-going.md` — rewritten: correct deploy flow, no `--test` references, no stale callout boxes ✅
-
-**Confirmed runtime flow:**
-```
-./deploy.sh          → validate .env → rsync → tear down → poll until containers gone → Done
-(NAS manually)       → sudo docker compose up -d --build
-orchestrator starts  → node main.js → scheduler.start() → cron registered
-3 AM cron fires      → runSpeedTestWindow() → pick server → switchServer() → 3 runs → commit
-manual test          → sudo docker exec orchestrator npm run test:single
-```
-
-**Next action: push to GitHub, then run the first manual test on the NAS.**
+This is a living document. Update it when priorities shift or new ideas surface.
 
 ---
 
-## Current State
+## Where things stand
 
-All Phase 1 work is done and three pre-flight bugs have been fixed:
-- All 13 orchestrator modules built and wired together
-- Docker stack (`docker-compose.yml`) defined with `gluetun-speedtest`, `speedtest-runner`, `orchestrator`
-- Static HTML report built (`report/index.html`) — two tabs, all charts
-- Logging (`logger.js`) and HTTP error handling (`httpClient.js`) integrated
-- `get-started-keep-going.md` written with setup and troubleshooting guide
+Phase 1 succeeded. The original goal — "measure real throughput across AirVPN US servers so
+production VPN selection can be informed by real data" — is effectively done. The stack has been
+running on the NAS since **2026-05-08** and has collected:
 
-**Bugs fixed (2026-05-07):**
-- `waitForTunnel()` now polls `http://gluetun-speedtest:8000/v1/vpn/status` (gluetun control API) instead of `check.airservers.org` — the external DNS lookup failed during gluetun's stop/remove/create cycle
-- `runSpeedtest()` now exec's `speedtest-cli` inside `speedtest-runner` via dockerode — it was previously running in the orchestrator process, bypassing the VPN entirely
-- `switchServer()` now restarts `speedtest-runner` after recreating `gluetun-speedtest` — the shared network namespace must be re-attached after each container recreation
-- `deploy.sh` now does `docker compose down` + force-removes orphaned containers before every rebuild, preventing name conflicts caused by the orchestrator's dynamic container recreation
-- Added `DNS_IPV6=false` to `gluetun-speedtest` environment, matching the production stack
+- **371 completed sessions** (each = 3 back-to-back runs → ~1,100 individual tests)
+- **602 hourly server-load snapshots**
+- **25 days of logs**
 
-**What hasn't happened yet:** the stack has never completed a full run on the NAS. No real test data exists. That's P0.
+The old VPN-tunnel blocker is **resolved** (fixed weeks ago — `waitForTunnel` warm-up against the
+gluetun control API + container-exit detection treated as a skip). It is no longer a blocker. The
+full blow-by-blow history of the pre-deploy bug fixes (the P0.5 / P0 / P1 checklists and the
+"Session Complete 2026-05-07" work) is archived in
+[`verified-completed-historical-only/`](verified-completed-historical-only/) — preserved, just no
+longer front-and-center.
 
----
+## Current decision
 
-## P0.5 — Resolve Tunnel & Speedtest Issues
+**Leave the NAS alone and let it keep collecting for ~60 more days. Revisit ≈ 2026-08-01.**
+At that point decide: keep running / switch the speed tester off / move to automatic server
+selection driven by the collected data.
 
-> **BLOCKER:** Gluetun tunnel not establishing on fresh stack deployment (May 2026-05-08). Code fixes are complete but end-to-end validation blocked.
-
-### Current Issue — PARTIALLY RESOLVED
-**Symptom (Updated):** Gluetun tunnel HTTP control API responds quickly, **but DNS through the tunnel is broken.** speedtest-cli fails with: `Cannot retrieve speedtest configuration. ERROR: <urlopen error [Errno -3] Temporary failure in name resolution>`
-
-**Evidence & Timeline:**
-- May 7: Early test runs completed 5 sessions with **null speed data** — root cause was missing `await` on `runSpeedtest()` ✅ **FIXED in code**
-- May 8 deployment: `await` fix deployed and verified in Docker
-- May 8 manual test (03:34 UTC): Chertan session started, tunnel confirmed after 2 attempts, **speedtest executed and returned real speeds** (↓231.89 Mbps ↑140.63 Mbps — confirmed in results.json)
-- May 8 continued: Subsequent tests failed when speedtest-cli tried to reach speedtest.net — DNS resolution failed inside tunnel
-
-**Key Discovery:** The `await` fix IS WORKING. Chertan's session shows correct speed averages in `results.json`. The tunnel itself comes up (control API responds). But DNS queries through the tunnel are failing.
-
-**Root Cause Analysis:**
-1. ✅ Code bug (missing await) — FIXED
-2. ❌ **Infrastructure issue:** DNS routing inside gluetun tunnel is not operational
-   - Gluetun container starts, control API responds → `waitForTunnel()` confirms
-   - WireGuard tunnel initializes (or control API is lying)
-   - But queries to 8.8.8.8 or domain names fail → speedtest-cli cannot reach speedtest.net
-   - Possible causes: DNS env vars wrong, WireGuard config incomplete, tunnel still initializing when control API responds
-
-### Proposed Solutions to Explore
-
-**Option A: Increase Tunnel Wait Time & Add Backoff**
-- Current: 5s poll interval, 60s timeout (12 attempts)
-- Try: 10s poll interval, 120s timeout, exponential backoff
-- Risk: Slower feedback loop, but might give gluetun more time to initialize
-- Effort: Low — 1 config change
-
-**Option B: Switch to Node.js Speedtest Library**
-- Current: exec `speedtest-cli` (Python binary) inside `speedtest-runner` container
-- Alternative: Use `speedtest-net` npm package (JavaScript, same API)
-- Benefit: Eliminates Python dependency, runs natively in Node.js, easier debugging
-- Risk: Different implementation, may have different edge cases
-- Effort: Medium — refactor `speedTester.js`, test compatibility
-- Investigation needed: Does `speedtest-net` work behind WireGuard tunnel? Performance equivalent to Python CLI?
-
-**Option C: Run Speedtest Locally (Not in Container)**
-- Current: speedtest-cli runs inside `speedtest-runner` container (routed through VPN tunnel)
-- Alternative: Have orchestrator run speedtest natively on the NAS host machine, then pipe results into results.json
-- Benefit: Sidesteps container networking complexity, easier to debug
-- Risk: Speedtest runs outside VPN tunnel unless you set up host-level routing (defeats purpose)
-- Effort: High — major architecture change, breaks isolation
-- Not recommended unless tunnel issues persist
-
-**Option D: Pre-flight Gluetun Health Check**
-- Add explicit health check before starting test session
-- Verify tunnel is truly operational (not just HTTP endpoint responding)
-- Example: ping a known IP through the tunnel before proceeding
-- Effort: Medium — add helper function to `gluetunManager.js`
-
-### Investigation Results & Recommendations
-
-**Option B Research (speedtest-net)** — COMPLETED
-
-The [speedtest-net npm package](https://www.npmjs.com/package/speedtest-net) is the most mature Node.js speedtest library:
-- **Adoption:** 41,123 weekly downloads (vs. speedtest-cli's 79)
-- **Implementation:** Wraps the official Ookla command-line client → results match speedtest.net web tests
-- **API:** Supports both CLI (`--accept-license --server-id X`) and Node.js module usage
-- **Compatibility:** No documented issues with VPN tunnels; should work through WireGuard if tunnel is operational
-- **Migration effort:** Medium — `npm install speedtest-net`, refactor `speedTester.js` to use `speedTest()` promise API instead of exec'ing speedtest-cli binary
-- **Risk:** Different library maintenance, but higher community adoption reduces risk vs. Python CLI
-
-Alternative packages found: `speed-test` (CLI wrapper), `speedtest-promise` (promise-based), but `speedtest-net` is recommended for maturity and Ookla integration.
-
-**Next Steps (DNS Tunnel Fix — Priority Order)**
-
-1. **Check gluetun container logs for DNS configuration:**
-   ```bash
-   ssh nas
-   sudo docker logs gluetun-speedtest 2>&1 | grep -i "dns\|route\|wireguard" | tail -30
-   ```
-   Look for: DNS server assignments, routing table setup, WireGuard state (UP/DOWN)
-
-2. **Verify DNS is working inside speedtest-runner container during active tunnel:**
-   ```bash
-   ssh nas
-   # Run during a speed test session
-   sudo docker exec speedtest-runner nslookup speedtest.net
-   sudo docker exec speedtest-runner ping -c 1 8.8.8.8  # Google DNS
-   ```
-   If both fail → tunnel isn't carrying DNS/IP traffic despite API responding
-
-3. **Check gluetun DNS env var in docker-compose.yml:**
-   Confirm the `DNS_IPV6=false` setting we added. Check if `DNS_PLAINTEXT` or other DNS vars are set. Gluetun defaults to Quad9/Cloudflare but may be mis-configured.
-
-4. **Increase tunnel wait time and add connectivity check:**
-   - Current: 5s poll interval, 60s timeout
-   - Proposed: Wait 10s AFTER control API confirms, then verify DNS works, before proceeding
-   - This gives WireGuard handshake more time to complete
-
-5. **Verify WireGuard config on NAS hasn't drifted:**
-   ```bash
-   ssh nas
-   cat /volume1/Docker/vpn-speed-tester/.env | grep WIREGUARD
-   ```
-   Confirm all 4 WireGuard vars present and valid (keys especially — they can expire or be revoked)
-
-6. **Test speedtest-net npm package as fallback:**
-   If DNS tunnel debugging doesn't resolve quickly, switching to speedtest-net (which we researched earlier) may be faster since it's actively maintained and could have better tunnel compatibility handling. Would avoid Python CLI issues entirely.
+> ⚠️ **Do not run `deploy.sh` from the laptop** until the laptop is reset to match `origin/master`.
+> `deploy.sh` uses `rsync` **without `--delete`**, so deploying from a stale machine leaves orphan
+> files behind and can regress server-filtering — exactly how the desktop/laptop drift happened.
+> See [laptop-experiment-keepers.md](laptop-experiment-keepers.md). The long-term fix for this whole
+> class of problem is tracked in [deployment-upgrade-options.md](deployment-upgrade-options.md).
 
 ---
 
-## P0 — Deploy & Validate
+## Next chapters
 
-> After tunnel issue is resolved, validate end-to-end with real speedtest data.
+### Bring the data home
+Read-only pull of the collected data from the NAS into a local `analysis/nas-data/` folder for
+offline analysis — `fetch-nas-data.sh`. Does not touch the live stack. See
+[`analysis/README.md`](../analysis/README.md).
 
-### Repository Setup
-- [ ] Push local repo to GitHub (`git push -u origin master`)
-- [ ] Confirm repo is visible on GitHub before touching the NAS
+### Analyze the data (open-ended)
+Once local, dig in. Starting questions:
+- Which server (and city) is fastest, and at what hours?
+- Does a server's load % actually predict real throughput?
+- Which servers are reliably good vs. flaky?
+- Best time of day to connect for lowest load?
 
-### NAS — One-Time Setup
-- [x] Enable SSH on ADM: Settings → Services → Terminal (port 8322)
-- [x] Generate SSH key pair on Mac if not already present (`ssh-keygen -t ed25519`)
-- [x] Install public key on NAS via ADM → Services → Terminal → SSH Keys
-- [x] Confirm passwordless SSH
+The existing report (`report/index.html`) already charts some of this.
 
-**SSH quick reference:**
-- Laptop: `ssh nas` (alias in `~/.ssh/config` → sysop@10.1.10.254:8322 using `~/.ssh/id_rsa_asustor`)
-- Desktop: `ssh networkadmin@10.1.10.254 -p 8322`
-- `sysop` and `networkadmin` are equivalent for this project's purposes.
+### Deployment & repo-structure upgrade
+The current deploy flow (`deploy.sh` = `rsync` **without `--delete`**, run from whichever machine,
+and **no git on the NAS code at all**) is the root cause of the drift documented in
+[`analysis/orchestrator-comparison.md`](../analysis/orchestrator-comparison.md). The leaning fix is
+to **build our own Docker image** (GHCR + GitHub Actions building `linux/amd64` + a Portainer
+redeploy webhook, reusing the Portainer already running on the ASUSTOR AS5404T), with pull-based git
+and `rsync --delete` kept as lower-effort fallbacks. Full menu, verified environment, and trade-offs
+in [deployment-upgrade-options.md](deployment-upgrade-options.md). **Sequenced after** the desktop
+reconciliation lands and the real NAS code is committed — we don't re-platform code we don't yet
+trust.
 
-### NAS — Sync & Deploy
-
-- [ ] Run `./deploy.sh` from your Mac — validates `.env`, rsyncs code, tears down old stack, polls until containers are gone
-- [ ] Create required data directories on the NAS (one-time, Volume 2 — separate from repo on Volume 1):
-  ```bash
-  ssh nas
-  mkdir -p /volume1/Docker/vpn-speed-tester/data/snapshots
-  mkdir -p /volume1/Docker/vpn-speed-tester/data/report
-  mkdir -p /volume1/Docker/vpn-speed-tester/data/logs
-  cp /volume1/Docker/vpn-speed-tester/report/index.html /volume1/Docker/vpn-speed-tester/data/report/index.html
-  ```
-- [ ] SSH into the NAS and bring the stack up:
-  ```bash
-  cd /volume1/Docker/vpn-speed-tester
-  sudo docker compose up -d --build
-  ```
-- [ ] Confirm all 3 containers show `Up`:
-  ```bash
-  sudo docker ps
-  ```
-  Expected: `gluetun-speedtest`, `speedtest-runner`, `orchestrator` all `Up`
-- [ ] (Optional) View the stack in Portainer at `http://10.1.10.254:9000`
-
-### First Manual Test Run
-- [ ] Run: `sudo docker exec orchestrator npm run test:single`
-- [ ] Watch logs in parallel: `sudo docker logs -f orchestrator`
-- [ ] Confirm qBittorrent paused (log line: `[qBittorrent] all torrents paused`)
-- [ ] Confirm gluetun-speedtest switches to a server (log: `switchServer: container started → Aladfar`)
-- [ ] Confirm speedtest-runner restarted (log: `switchServer: speedtest-runner restarted`)
-- [ ] Confirm tunnel comes up (log: `waitForTunnel: tunnel confirmed after N attempt(s)`)
-- [ ] Confirm 3 speed test runs complete with Mbps values logged
-- [ ] Confirm `results.json` written: `ls -lh /volume1/Docker/vpn-speed-tester/data/results.json`
-- [ ] Confirm git commit: `cd /volume1/Docker/vpn-speed-tester/data && git log --oneline`
-- [ ] Confirm qBittorrent resumed (log: `[qBittorrent] torrents resumed`)
-
-### Second Manual Test Run
-- [ ] Run `sudo docker exec orchestrator npm run test:single` again
-- [ ] Confirm queue builder picks a different server/tier than run 1
-- [ ] Confirm `results.json` has two servers' worth of data
-- [ ] Open `report/index.html` in browser pointed at volume mount — confirm bar chart renders
-
-### Snapshot Verification
-- [ ] Wait for the hourly cron to fire (or restart orchestrator near the top of the hour)
-- [ ] Confirm snapshot file: `ls /volume1/Docker/vpn-speed-tester/data/snapshots/`
-- [ ] Confirm `snapshots/index.json` exists and lists the snapshot file
-- [ ] Confirm report Tab 2 (Hourly Snapshots) loads and renders the heatmap
-
----
-
-## P1 — Activate Automation
-
-> After 2 successful manual runs pass cleanly, enable the nightly scheduler.
-
-- [ ] The orchestrator already runs in scheduled mode by default (`npm run start` = `node main.js` without `--manual`)
-- [ ] Confirm startup logs show cron registrations:
-  - `[INFO ] cron registered: speed test window at hour 3`
-  - `[INFO ] cron registered: hourly snapshot`
-- [ ] Let the 3 AM cron run unattended — review logs the next morning
-- [ ] Check: `grep -E "\[ERROR\]|\[WARN\]" /volume1/Docker/vpn-speed-tester/data/logs/$(date +%F).log`
-- [ ] After 3–5 nights: review tier coverage across servers (check report bar chart)
-- [ ] After 1 week: decide if `TEST_WINDOW_HOURS` needs to increase to cover more servers per night
-
-### Optional Schedule Adjustments
-- [ ] Change `TEST_START_HOUR` in `orchestrator/config.js` if 3 AM is inconvenient
-- [ ] Add a weekend midday run in `orchestrator/scheduler.js` if coverage is building too slowly:
-  ```js
-  cron.schedule('0 12 * * 6,0', () => { scheduler.runSpeedTestWindow(); });
-  ```
-- [ ] Redeploy via Portainer after any config or code change (Pull and redeploy)
-
----
-
-## P2 — Automated Production VPN Switching
-
-> Requires 2–4 weeks of snapshot data to set confident load thresholds. Do not start until snapshot data is available.
-
-**Goal:** When the production Gluetun server load exceeds a threshold, the hourly snapshot job automatically switches it to a better server via the Portainer API.
-
-- [ ] Analyze snapshot data — which servers are consistently Low/Medium? Which cities are reliable?
-- [ ] Define the load threshold for triggering a switch (starting point: `currentload > 70`)
-- [ ] Define preferred city list for replacement candidates (closest, historically lowest load)
-- [ ] Build `orchestrator/portainerClient.js`:
-  - `GET /api/stacks` — find the production stack ID
-  - `GET /api/stacks/{id}` — read current env vars
-  - `PUT /api/stacks/{id}` — update `SERVER_NAMES`, redeploy in-place
-  - Portainer API token stored in `.env` as `PORTAINER_API_TOKEN`
-- [ ] Wire into `snapshotWriter.js`: after each hourly snapshot, check production server load vs. threshold
-- [ ] Query snapshot history to select best replacement server (lowest recent load in preferred cities)
-- [ ] **Dry run first:** log the would-be switch but don't call Portainer API — let it run for 2–3 days
-- [ ] Review dry-run logs — confirm switch decisions look reasonable
-- [ ] Enable live switching — add `ENABLE_AUTO_SWITCH=true` to `.env` as a gate
-- [ ] Monitor first few live switches in logs and confirm production traffic behaves correctly
-- [ ] Optional: Home Assistant / Mosquitto push notification on switch event
-
----
-
-## P3 — Report Server & React Frontend
-
-> JSON schema does not change. This is a UI lift — same data, better interface.
-
-**Goal:** Replace the single static `index.html` with a Node.js/Express server and React frontend so the report can be served on the LAN, support live data refresh, and grow new features without file size limits.
-
-- [ ] Design the service structure (fourth container in `docker-compose.yml` or extend orchestrator)
-- [ ] Add `express` to `package.json` (or create a separate `report-server/` directory)
-- [ ] Build Express endpoints:
-  - `GET /api/results` — reads and returns `results.json`
-  - `GET /api/snapshots` — returns `index.json` manifest + individual snapshot files
-  - `GET /api/status/live` — proxies AirVPN status API for a live server load view
-- [ ] Migrate HTML/CSS/Chart.js code from `report/index.html` into React components
-- [ ] Expose on port 8081 (or another unused port) for LAN browser access
-- [ ] Add new service to `docker-compose.yml`
-- [ ] Update `get-started-keep-going.md` with new access URL and any new deploy steps
+### The pivot — media-stack control panel (green-lit)
+Turn what this project learned into a single control panel for the whole media stack
+(Jellyfin / qBittorrent / Radarr / Sonarr / …). Design captured in
+[media-stack-manager-handoff.md](media-stack-manager-handoff.md). Core challenge: the production
+stack shares **one** gluetun container across 7 services, so "switch VPN server" means recreating
+gluetun *and* every attached service in the right order — reusing this repo's `gluetunManager.js`
+machinery. This chapter supersedes the earlier standalone "automated production VPN switching" and
+"React report frontend" ideas (now folded into the handoff doc).
 
 ---
 
 ## Considerations & Future Ideas
 
-Items worth tracking but not committed to. Revisit as data accumulates and priorities clarify.
+Tracked but not committed. Revisit as data accumulates.
 
 | Idea | Notes |
 |------|-------|
-| **Smart scheduling (Phase 4)** | After several weeks of snapshots, dynamically shift test window to hours when target servers are historically low-load. Build predicted load curves per server per hour of day. |
-| **Unit tests** | Add `npm test` with Jest. Priority candidates: `queueBuilder` priority logic, `aggregator` average calculation, `airvpnStatus` tier classification. |
-| **Data retention policy** | Snapshots accumulate indefinitely. Define a max age (e.g., 90 days) and add a cleanup task to the hourly cron. |
-| **Error alerting** | Push a notification (Home Assistant, email, Pushover) if an entire test window fails — not just a session, but the whole run exits without completing. |
-| **Jitter/ping visualizations** | The report bar chart focuses on download speed. Latency and jitter data is collected but underrepresented. Add scatter plots or a ranking view by ping. |
-| **International servers** | The spec excludes these for Phase 1, but the architecture handles any AirVPN server by name. Could enable EU or AU servers as a separate test tier. |
-| **Multiple entry IPs per server** | Currently always uses `ip_v4_in1`. All 4 IPs hit the same physical box, but testing the others could reveal if one performs better for WireGuard. |
-| **Container health watchdog** | Add a watchdog that detects if the orchestrator goes silent (no log output for N hours during a window) and restarts it or sends an alert. |
-| **Efficiency ratio in report** | `speed_efficiency_ratio` is collected but not prominently charted. Useful for finding servers that underperform relative to their available headroom. |
+| **Smart scheduling** | Shift the test window to hours when target servers are historically low-load; build predicted load curves per server per hour. |
+| **Unit tests** | `queueBuilder` priority logic, `aggregator` averages, `airvpnStatus` tier classification. |
+| **Data retention** | Snapshots accumulate indefinitely. Define a max age (~90 days) + cleanup in the hourly cron. |
+| **Error alerting** | Notify (Home Assistant / Mosquitto / Pushover) if a whole test window fails. |
+| **Jitter/ping views** | Latency/jitter is collected but underrepresented in the report. |
+| **International servers** | Architecture handles any AirVPN server by name; EU/AU could be a separate tier. |
+| **Multiple entry IPs** | Currently always `ip_v4_in1`; testing the other 3 IPs could reveal WireGuard differences. |
+| **Container health watchdog** | Detect a silent orchestrator (no logs for N hours mid-window) and restart/alert. |
+| **Efficiency ratio in report** | `speed_efficiency_ratio` is collected but not prominently charted. |
 
 ---
 
-*Update this file as work progresses. Cross off items, move ideas up when they become committed, and add new ones as they surface.*
+*Historical detail: [`verified-completed-historical-only/`](verified-completed-historical-only/).*

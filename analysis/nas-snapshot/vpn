@@ -1,0 +1,319 @@
+#!/bin/bash
+# vpn — Single entrypoint for the NAS VPN speed-tester stack.
+#
+# All laptop-side workflows route through this one script. See ./vpn help.
+# Implementation note: keep subcommands as `cmd_*` functions, dispatch via case.
+set -e
+set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+ENV_FILE="$SCRIPT_DIR/.env"
+
+usage() {
+  cat <<'EOF'
+Usage: ./vpn <command> [flags]
+
+Commands:
+  deploy              Sync repo to NAS and (re)build the docker stack
+  deploy --check      Show container status on NAS without deploying
+  test                Run one manual speed-test window (node main.js --manual)
+  test --infinite     Loop all servers continuously (node main.js --infinite)
+  logs                Tail today's orchestrator log on the NAS
+  servers             List the AirVPN server names gluetun will accept
+  check               Show status of all four containers on the NAS
+  report              Sync report HTML from NAS and open in browser (file://)
+  local               Sync NAS data to .local-staging/ and serve on :9191
+  local --sync        Sync data only, don't start server
+  local --serve       Start server only, don't re-sync
+  rebuild             Reconstruct results.json from raw-results.json + server-data.json
+  help, -h            Show this message
+
+First time:
+  1. Fill in .env (see README.md for required variables)
+  2. ./vpn deploy
+  3. ./vpn test                  # smoke-check one server
+  4. ./vpn report                # see the result
+EOF
+}
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+require_env_file() {
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "ERROR: .env not found at $ENV_FILE"
+    exit 1
+  fi
+}
+
+require_id_nas() {
+  # Without the key, ssh falls back to a password prompt which hangs cron/CI.
+  if [ ! -f "$HOME/.ssh/id_nas" ]; then
+    echo "ERROR: ~/.ssh/id_nas not found. Generate a key and add the pubkey to sysop@10.1.10.254:~/.ssh/authorized_keys, or copy id_nas from another machine."
+    exit 1
+  fi
+}
+
+load_sudo_prefix() {
+  require_env_file
+  local pw
+  pw=$(get_env_var SYSOP_SSH)
+  if [ -z "$pw" ] || [[ "$pw" == *"<"* ]]; then
+    echo "ERROR: SYSOP_SSH missing or placeholder in .env"
+    exit 1
+  fi
+  SUDO="echo $(printf '%q' "$pw") | sudo -S"
+}
+
+container_status() {
+  $SSH "$SUDO docker ps --filter 'name=gluetun-speedtest' --filter 'name=speedtest-runner' --filter 'name=orchestrator' --filter 'name=vpn-report' --format 'table {{.Names}}\t{{.Status}}\t{{.RunningFor}}'"
+}
+
+# ── deploy ────────────────────────────────────────────────────────────────────
+
+cmd_deploy() {
+  require_env_file
+  require_id_nas
+
+  # Validate every required var up-front so we don't half-deploy.
+  local missing=()
+  local val
+  for var in WIREGUARD_PRIVATE_KEY WIREGUARD_PRESHARED_KEY WIREGUARD_ADDRESSES \
+             QBT_USERNAME QBT_PASSWORD QBT_BASE_URL SYSOP_SSH; do
+    val=$(get_env_var "$var")
+    if [ -z "$val" ] || [[ "$val" == *"<"* ]]; then
+      missing+=("$var")
+    fi
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "ERROR: missing or placeholder values in .env:"
+    for v in "${missing[@]}"; do echo "  $v"; done
+    exit 1
+  fi
+
+  load_sudo_prefix
+
+  if [ "${1:-}" = "--check" ]; then
+    echo "Container status on NAS:"
+    container_status
+    exit 0
+  fi
+
+  echo "Syncing to NAS..."
+  # Exclude data/ — the orchestrator writes results, raw runs, snapshots, logs,
+  # and atomic temp files there. Without this, the laptop's stale data/ wipes
+  # live NAS results on every deploy. The report/ → data/report/ rsync below
+  # is the only intentional write under data/.
+  rsync -avz -e "$RSYNC_SSH" \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='.local-staging' \
+    --exclude='data/' \
+    "$SCRIPT_DIR/" \
+    "$NAS:$NAS_DIR/"
+
+  echo "Ensuring data directories on NAS..."
+  $SSH "$SUDO mkdir -p $NAS_DIR/data/snapshots $NAS_DIR/data/report $NAS_DIR/data/logs"
+
+  echo "Syncing report to NAS..."
+  rsync -avz -e "$RSYNC_SSH" \
+    "$SCRIPT_DIR/report/" \
+    "$NAS:$NAS_DIR/data/report/"
+
+  echo "Taking down existing stack on NAS..."
+  $SSH "$SUDO sh -c 'cd $NAS_DIR && docker compose down; docker rm -f gluetun-speedtest speedtest-runner orchestrator 2>/dev/null || true'"
+
+  echo "Waiting for containers to stop..."
+  local elapsed=0 poll=3 timeout=30 running
+  while [ $elapsed -lt $timeout ]; do
+    running=$($SSH "$SUDO docker ps --filter 'name=gluetun-speedtest' --filter 'name=speedtest-runner' --filter 'name=orchestrator' --format '{{.Names}}'" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$running" ]; then
+      echo "All containers stopped."
+      break
+    fi
+    sleep $poll
+    elapsed=$((elapsed + poll))
+  done
+  [ $elapsed -ge $timeout ] && echo "WARNING: containers may still be running after ${timeout}s — check manually."
+
+  echo "Bringing up the stack..."
+  $SSH "$SUDO sh -c 'cd $NAS_DIR && docker compose up -d --build'"
+
+  echo "Verifying stack..."
+  sleep 3
+  local containers
+  containers=$(container_status)
+  if [ -z "$containers" ]; then
+    echo "ERROR: containers did not start. Run: ./vpn check"
+    exit 1
+  fi
+  echo "Stack is up:"
+  echo "$containers"
+  echo ""
+  echo "Deployment complete. Crons are active."
+}
+
+# ── test ──────────────────────────────────────────────────────────────────────
+
+cmd_test() {
+  load_sudo_prefix
+  local mode_flag="${1:---manual}"
+  case "$mode_flag" in
+    --infinite|infinite)
+      echo "Starting INFINITE speed-test loop on NAS (Ctrl+C to detach — keeps running on the NAS)..."
+      echo ""
+      $SSH "$SUDO docker exec orchestrator node main.js --infinite"
+      ;;
+    --manual|manual|"")
+      echo "Triggering one manual speed-test window on the NAS..."
+      echo "  (output streams below; Ctrl+C detaches — run continues on NAS)"
+      echo ""
+      $SSH "$SUDO docker exec orchestrator node main.js --manual"
+      ;;
+    *)
+      echo "Unknown test flag: $mode_flag"
+      echo "Usage: ./vpn test [--manual | --infinite]"
+      exit 1
+      ;;
+  esac
+}
+
+# ── logs ──────────────────────────────────────────────────────────────────────
+
+cmd_logs() {
+  load_sudo_prefix
+  local today
+  today=$(date '+%Y-%m-%d')
+  echo "Tailing $NAS_DIR/data/logs/$today.log on the NAS (Ctrl+C to stop)..."
+  $SSH "tail -f $NAS_DIR/data/logs/$today.log"
+}
+
+# ── servers ───────────────────────────────────────────────────────────────────
+
+cmd_servers() {
+  load_sudo_prefix
+  echo "Querying gluetun's accepted AirVPN server list..."
+  # Python (not jq) because the response has duplicate server_name entries —
+  # set() dedupes in one step.
+  $SSH "$SUDO docker exec gluetun-speedtest wget -qO- http://localhost:8000/v1/servers/airvpn" \
+    | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+servers = data if isinstance(data, list) else data.get('servers', [])
+names = sorted(set(s.get('server_name') or s.get('name') for s in servers if (s.get('server_name') or s.get('name'))))
+print(f'gluetun accepts {len(names)} AirVPN server names:')
+print('  ' + ', '.join(names))
+"
+}
+
+# ── check ─────────────────────────────────────────────────────────────────────
+
+cmd_check() {
+  load_sudo_prefix
+  echo "Container status on NAS:"
+  container_status
+}
+
+# ── report ────────────────────────────────────────────────────────────────────
+
+cmd_report() {
+  # Opens as file://; fetch() calls inside index.html will fail. Use
+  # ./vpn local for a real HTTP-served preview.
+  local local_report="$SCRIPT_DIR/report/index.html"
+  echo "Pulling latest report from NAS..."
+  rsync -avz -e "$RSYNC_SSH" --delete \
+    "$NAS:$NAS_DIR/report/" \
+    "$SCRIPT_DIR/report/"
+  echo "Report synced to: $local_report"
+  if command -v open &>/dev/null; then
+    open "$local_report"
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$local_report"
+  else
+    echo "Open in browser: $local_report"
+  fi
+}
+
+# ── local ─────────────────────────────────────────────────────────────────────
+
+cmd_local() {
+  require_id_nas
+  local staging="$SCRIPT_DIR/.local-staging"
+  local port=9191
+  local do_sync=true do_serve=true
+  case "${1:-}" in
+    --sync)  do_serve=false ;;
+    --serve) do_sync=false ;;
+    "") ;;
+    *) echo "Unknown local flag: $1"; echo "Usage: ./vpn local [--sync | --serve]"; exit 1 ;;
+  esac
+
+  if [ "$do_sync" = true ]; then
+    echo "Setting up local staging at $staging ..."
+    mkdir -p "$staging/snapshots" "$staging/logs" "$staging/report"
+    # Symlink so edits to report/index.html are reflected immediately.
+    local link="$staging/report/index.html"
+    if [ ! -L "$link" ]; then
+      ln -sf "$SCRIPT_DIR/report/index.html" "$link"
+      echo "  Linked report/index.html"
+    fi
+    # Data files live as siblings of report/ on the NAS — mirror that so
+    # fetch('../results.json') resolves.
+    echo "Syncing data files from NAS..."
+    for f in results.json raw-results.json server-data.json; do
+      rsync -az -e "$RSYNC_SSH" "$NAS:$NAS_DIR/data/$f" "$staging/$f" \
+        && echo "  $f" \
+        || echo "  (skipped $f — not yet on NAS)"
+    done
+    echo "Syncing snapshots..."
+    rsync -az -e "$RSYNC_SSH" --delete "$NAS:$NAS_DIR/data/snapshots/" "$staging/snapshots/" \
+      && echo "  snapshots/" \
+      || echo "  (skipped snapshots — not yet on NAS)"
+    echo "Syncing logs..."
+    rsync -az -e "$RSYNC_SSH" --delete "$NAS:$NAS_DIR/data/logs/" "$staging/logs/" \
+      && echo "  logs/" \
+      || echo "  (skipped logs — not yet on NAS)"
+    echo "Sync complete."
+  fi
+
+  if [ "$do_serve" = true ]; then
+    if lsof -ti tcp:$port &>/dev/null; then
+      echo "Port $port already in use — assuming server is running."
+    else
+      python3 -m http.server $port --directory "$staging" &>/dev/null &
+      echo "Server started on http://localhost:$port (PID $!)"
+      sleep 0.5
+    fi
+    local url="http://localhost:$port/report/"
+    if command -v open &>/dev/null; then open "$url"
+    elif command -v xdg-open &>/dev/null; then xdg-open "$url"
+    else echo "Open in browser: $url"
+    fi
+  fi
+}
+
+# ── rebuild ───────────────────────────────────────────────────────────────────
+
+cmd_rebuild() {
+  load_sudo_prefix
+  echo "Rebuilding results.json on NAS from raw-results.json + server-data.json..."
+  $SSH "$SUDO docker exec orchestrator node rebuildResults.js"
+}
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+  deploy)       cmd_deploy   "$@" ;;
+  test)         cmd_test     "$@" ;;
+  logs)         cmd_logs     "$@" ;;
+  servers)      cmd_servers  "$@" ;;
+  check)        cmd_check    "$@" ;;
+  report)       cmd_report   "$@" ;;
+  local)        cmd_local    "$@" ;;
+  rebuild)      cmd_rebuild  "$@" ;;
+  help|-h|--help) usage ;;
+  *)            echo "Unknown command: $CMD"; echo ""; usage; exit 1 ;;
+esac

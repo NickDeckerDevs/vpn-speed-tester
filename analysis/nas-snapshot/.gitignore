@@ -4,6 +4,3 @@ node_modules/
 .results.tmp.*.json
 .claude/
 .local-staging/
-analysis/nas-data/
-nas-clone/
-.DS_Store
