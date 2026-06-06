@@ -5,3 +5,4 @@ node_modules/
 .claude/
 analysis/nas-data/
 nas-clone/
+.DS_Store
