@@ -1,0 +1,194 @@
+#!/usr/bin/env node
+// vpn-ui — Local browser control panel for the ./vpn entrypoint.
+//
+// Binds to 127.0.0.1:9192 and serves vpn-ui.html. Buttons in the page POST
+// /api/run with an allowlisted {cmd, flag} pair; the server spawns
+// `./vpn <cmd> [flag]` and streams stdout/stderr back over Server-Sent Events.
+//
+// No deps beyond Node built-ins. Run with: ./vpn-ui
+
+const http = require('http');
+const { spawn, exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const HOST = '127.0.0.1';
+const PORT = 9192;
+const SCRIPT_DIR = __dirname;
+const HTML_PATH = path.join(SCRIPT_DIR, 'vpn-ui.html');
+const VPN_PATH = path.join(SCRIPT_DIR, 'vpn');
+
+// Allowlist: command name → { description, flags: [allowed flag strings, '' = no flag] }
+// The flag values reach the shell as a single argv element after `./vpn <cmd>`,
+// so spawn(shell:false) makes injection impossible regardless.
+const COMMANDS = {
+  help:    { desc: 'Show ./vpn usage (safe sanity check)', flags: [''] },
+  check:   { desc: 'Status of all four containers on the NAS', flags: [''] },
+  servers: { desc: 'List AirVPN server names gluetun will accept', flags: [''] },
+  logs:    { desc: "Tail today's orchestrator log from the NAS", flags: [''] },
+  report:  { desc: 'Rsync report HTML from NAS and open it (file://)', flags: [''] },
+  test:    { desc: 'Run a speed-test window on the NAS', flags: ['--manual', '--infinite'] },
+  deploy:  { desc: 'Sync repo to NAS and rebuild the docker stack', flags: ['', '--check'] },
+  local:   { desc: 'Sync NAS data to .local-staging/ and serve on :9191', flags: ['', '--sync', '--serve'] },
+  rebuild: { desc: 'Reconstruct results.json from raw-results.json + server-data.json (one-shot recovery)', flags: [''] },
+};
+
+const runs = new Map(); // runId → { proc, cmd, flag, buffer: [{kind, line}], done, exitCode, listeners: Set<res> }
+
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); }
+      catch (e) { reject(e); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function broadcast(run, kind, payload) {
+  run.buffer.push({ kind, payload });
+  // Cap buffer so a runaway tail doesn't eat memory.
+  if (run.buffer.length > 5000) run.buffer.splice(0, run.buffer.length - 5000);
+  for (const res of run.listeners) {
+    res.write(`event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`);
+  }
+}
+
+function startRun(cmd, flag) {
+  const args = flag ? [cmd, flag] : [cmd];
+  const proc = spawn(VPN_PATH, args, { cwd: SCRIPT_DIR, shell: false });
+  const runId = crypto.randomBytes(8).toString('hex');
+  const run = {
+    proc, cmd, flag, runId,
+    buffer: [], done: false, exitCode: null,
+    listeners: new Set(),
+  };
+  runs.set(runId, run);
+
+  const pipeLines = (stream, kind) => {
+    let leftover = '';
+    stream.on('data', chunk => {
+      const text = leftover + chunk.toString('utf8');
+      const lines = text.split('\n');
+      leftover = lines.pop();
+      for (const line of lines) broadcast(run, kind, line);
+    });
+    stream.on('end', () => {
+      if (leftover) { broadcast(run, kind, leftover); leftover = ''; }
+    });
+  };
+  pipeLines(proc.stdout, 'stdout');
+  pipeLines(proc.stderr, 'stderr');
+
+  proc.on('error', err => {
+    broadcast(run, 'error', String(err && err.message || err));
+  });
+  proc.on('close', code => {
+    run.done = true;
+    run.exitCode = code;
+    broadcast(run, 'exit', { code });
+    // Keep run around briefly so late subscribers can replay; gc after 5 min.
+    setTimeout(() => runs.delete(runId), 5 * 60 * 1000);
+  });
+
+  return run;
+}
+
+function stopRun(run) {
+  if (run.done) return;
+  try { run.proc.kill('SIGINT'); } catch {}
+  setTimeout(() => {
+    if (!run.done) { try { run.proc.kill('SIGKILL'); } catch {} }
+  }, 2000);
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${HOST}:${PORT}`);
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    fs.readFile(HTML_PATH, (err, data) => {
+      if (err) { res.writeHead(500); res.end('vpn-ui.html missing'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(data);
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/commands') {
+    const manifest = Object.fromEntries(
+      Object.entries(COMMANDS).map(([k, v]) => [k, { desc: v.desc, flags: v.flags }])
+    );
+    return send(res, 200, manifest);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/run') {
+    let body;
+    try { body = await readBody(req); } catch { return send(res, 400, { error: 'invalid json' }); }
+    const cmd = body && body.cmd;
+    const flag = body && body.flag || '';
+    if (!COMMANDS[cmd]) return send(res, 400, { error: 'unknown command' });
+    if (!COMMANDS[cmd].flags.includes(flag)) return send(res, 400, { error: 'flag not allowed for this command' });
+    const run = startRun(cmd, flag);
+    return send(res, 200, { runId: run.runId, cmd, flag });
+  }
+
+  const streamMatch = url.pathname.match(/^\/api\/stream\/([0-9a-f]+)$/);
+  if (req.method === 'GET' && streamMatch) {
+    const run = runs.get(streamMatch[1]);
+    if (!run) { res.writeHead(404); res.end('no such run'); return; }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    // Replay buffered events so a late subscriber doesn't miss anything.
+    for (const { kind, payload } of run.buffer) {
+      res.write(`event: ${kind}\ndata: ${JSON.stringify(payload)}\n\n`);
+    }
+    if (run.done) { res.end(); return; }
+    run.listeners.add(res);
+    req.on('close', () => run.listeners.delete(res));
+    return;
+  }
+
+  const stopMatch = url.pathname.match(/^\/api\/stop\/([0-9a-f]+)$/);
+  if (req.method === 'POST' && stopMatch) {
+    const run = runs.get(stopMatch[1]);
+    if (!run) return send(res, 404, { error: 'no such run' });
+    stopRun(run);
+    return send(res, 200, { ok: true });
+  }
+
+  res.writeHead(404); res.end('not found');
+});
+
+server.listen(PORT, HOST, () => {
+  const url = `http://${HOST}:${PORT}/`;
+  console.log(`vpn-ui listening on ${url}`);
+  console.log('Ctrl+C to stop. Running processes will receive SIGINT.');
+  if (!process.env.VPN_UI_NO_OPEN) {
+    const opener = process.platform === 'darwin' ? 'open'
+                 : process.platform === 'win32' ? 'start ""'
+                 : 'xdg-open';
+    exec(`${opener} ${url}`, () => {});
+  }
+});
+
+function shutdown() {
+  console.log('\nShutting down. Sending SIGINT to active runs...');
+  for (const run of runs.values()) {
+    if (!run.done) { try { run.proc.kill('SIGINT'); } catch {} }
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
