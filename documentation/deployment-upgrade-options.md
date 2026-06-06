@@ -151,6 +151,47 @@ Keep the current push model but add `--delete` so orphan files are removed on ea
   immutability, no rollback. It treats a symptom, not the cause.
 - **When:** only as a short-term safety patch if we keep rsync at all. Not a destination.
 
+### rsync `--delete` safety — the landmines (if this path is ever taken)
+
+`--delete` makes the NAS an exact mirror of the repo: **any file under the deploy root not in the repo
+(and not excluded) gets deleted.** That's the point for stale *code* — but the generated `data/` lives
+inside the same destination tree and is *not* in the repo, so a naive `--delete` once **wiped the report
+data**. That scar is why the current `./vpn deploy` never uses `--delete`.
+
+What lives under the deploy root `/volume1/Docker/vpn-speed-tester/` and its `--delete` risk:
+
+| Path | In repo? | `--delete` risk |
+|---|---|---|
+| `orchestrator/`, `report/`, `docker-compose.yml`, `vpn*`, … | yes | **intended** — stale files here *should* be removed |
+| `data/` | no | **DATA LOSS** — results/snapshots/logs + the served `data/report/`. Already excluded. |
+| `gluetun-speedtest/` | no | **TUNNEL BREAKS** — gluetun runtime + **WireGuard keys**. ⚠️ **not currently excluded.** |
+| `.env` | no (git-ignored) | secrets the stack needs; currently synced — fine *if* a current local `.env` always exists |
+
+**The unhandled landmine: `gluetun-speedtest/`.** It holds the WireGuard keys, isn't in the repo, and is
+**not** in the deploy's exclude list. The moment `--delete` is added without also excluding it, the next
+deploy deletes the keys and the tunnel dies. (`data/` is already protected via `--exclude='data/'`; an
+excluded dir is also protected from `--delete` — do **not** add `--delete-excluded`, which overrides that.)
+
+**Safe recipe, if Option 3 is ever taken:**
+1. Add `--delete` **and** `--exclude='gluetun-speedtest/'` to the main code rsync, keeping the existing
+   excludes (`.git`, `node_modules`, `.local-staging`, `data/`) and adding the doc/cruft excludes
+   (`*.md`, `documentation/`, `analysis/`, `media-stack/`, `.claude/`) per the cruft note above. The
+   separate `report/ → data/report/` rsync stays **without** `--delete`.
+2. **Always dry-run first** (`rsync -avzn --delete …`): confirm every `deleting …` line is stale *code*
+   and that **nothing** under `data/` or `gluetun-speedtest/` appears. Only then drop `-n`.
+3. **Gate it behind a flag** (e.g. `./vpn deploy --prune`) so everyday deploys stay additive and
+   destructive cleanup is an explicit, deliberate choice.
+4. Open question: **exclude `.env`?** If the NAS `.env` is ever the source of truth, exclude it so a
+   deploy can't clobber it. Decide before enabling `--delete`.
+
+**But:** Option 1 (build an image) **sidesteps all of the above** — an image deploy doesn't rsync code
+at all, so there are no `--delete` landmines and no exclude list to maintain; `data/` and
+`gluetun-speedtest/` simply stay NAS volumes. This safety detail matters only if we stay on rsync.
+
+> *Folded in 2026-06-06 from the former `potential-deploy-issues-to-think-about.md`. The one-time removal
+> of the stale NAS files that doc set out to enable is already done (via explicit-path `rm`, not
+> `--delete`) — see [this-is-my-mess/desktop-vs-origin-findings.md](this-is-my-mess/desktop-vs-origin-findings.md) §7.*
+
 ---
 
 ## Last-mile sub-options (for Option 1)
