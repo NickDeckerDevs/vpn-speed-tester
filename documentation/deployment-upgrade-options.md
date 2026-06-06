@@ -6,8 +6,8 @@ others are kept here as viable paths to dig into later. Nothing here is executed
 decision document.
 
 > **Sequencing:** do not act on any of this until the desktop reconciliation lands and the *real*
-> NAS code is committed to git (see `analysis/desktop-investigation-handoff.md` and
-> `analysis/orchestrator-comparison.md`). We don't restructure or re-platform code we don't yet
+> NAS code is committed to git (see `documentation/this-is-my-mess/desktop-investigation-handoff.md` and
+> `documentation/this-is-my-mess/orchestrator-comparison.md`). We don't restructure or re-platform code we don't yet
 > fully trust.
 
 ---
@@ -162,5 +162,5 @@ image and never in the code repo.
 - **Leaning:** Option 1 (build our own image: GHCR + GitHub Actions + Portainer webhook).
 - **Retained for later:** Options 2 and 3, and the repo-structure choice.
 - **Blocked on:** the desktop reconciliation + committing the real NAS code first. See
-  [media-stack-manager-handoff.md](media-stack-manager-handoff.md) (the future control panel that
+  [media-stack-manager-handoff.md](../media-stack/media-stack-manager-handoff.md) (the future control panel that
   this deploy model also serves) and [roadmap-working.md](roadmap-working.md).

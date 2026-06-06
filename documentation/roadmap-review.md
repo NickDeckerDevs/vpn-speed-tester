@@ -147,7 +147,7 @@ learn — that's fine. Some natural starting questions:
 
 **Plain English:** Turn what this project learned into a **single control panel for your entire
 media stack** (the Jellyfin / qBittorrent / Radarr / Sonarr setup in
-`documentation/2026-06-01_media-server.yaml`). A web page on the NAS where you can:
+`media-stack/2026-06-01_media-server.yaml`). A web page on the NAS where you can:
 
 - **See the logs** from a browser (no SSH needed).
 - **Switch the VPN to a faster server** — using the speed data we collected — and have everything
@@ -190,7 +190,7 @@ the data collected in Pieces 4–5.
 - Off-the-shelf request UIs (Overseerr/Jellyseerr) vs. a lightweight custom one — note the
   trade-off rather than deciding now.
 
-> Piece 6 becomes a handoff document (`documentation/media-stack-manager-handoff.md`) when you
+> Piece 6 becomes a handoff document (`media-stack/media-stack-manager-handoff.md`) when you
 > decide to build it — not built in this session.
 
 ---

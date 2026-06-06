@@ -1,7 +1,7 @@
 # Potential Deploy Issues to Think About
 
 **Written:** 2026-06-06. **Status:** advisory — nothing here is implemented yet.
-**Companion:** [desktop-vs-origin-findings.md](desktop-vs-origin-findings.md) (how we learned the
+**Companion:** [desktop-vs-origin-findings.md](this-is-my-mess/desktop-vs-origin-findings.md) (how we learned the
 desktop == NAS source of truth).
 
 ---
