@@ -1,3 +1,8 @@
+<!--
+6/6/2026 - nick decker | Refactor
+CHANGED
+- data fetch paths flattened from ../data/{results,server-data,raw-results}.json to ../{...}.json — data files now live at the deploy root alongside the report instead of in a data/ subdirectory
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -667,15 +672,15 @@ async function loadData() {
   let sessionsList = [], serverData = {}, rawResults = {};
 
   try {
-    const r = await fetch('../data/results.json');
+    const r = await fetch('../results.json');
     if (r.ok) { sessionsList = await r.json(); if (!Array.isArray(sessionsList)) sessionsList = []; }
   } catch { /* no data yet */ }
   try {
-    const r = await fetch('../data/server-data.json');
+    const r = await fetch('../server-data.json');
     if (r.ok) serverData = await r.json();
   } catch { /* no data yet */ }
   try {
-    const r = await fetch('../data/raw-results.json');
+    const r = await fetch('../raw-results.json');
     if (r.ok) rawResults = await r.json();
   } catch { /* no data yet */ }
 
