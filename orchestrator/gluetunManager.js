@@ -8,8 +8,8 @@
  * docker.exec() directly — they do NOT use this module for that.
  *
  * Responsibility split with scheduler.js:
- *   getAcceptedServers()  — raw fetch from gluetun control API (this file)
- *   resolveAcceptedServers() — resilient fetch with disk cache (scheduler.js)
+ *   getAcceptedServers()  — returns the accepted-server Set (this file)
+ *   resolveAcceptedServers() — resilient wrapper with disk-cache fallback (scheduler.js)
  * Keep these separate; scheduler owns the fallback/caching concern.
  *
  * Changelog
@@ -17,6 +17,13 @@
  *               endpoint to return a Set<string> of server public_names that this
  *               gluetun binary will accept; used by scheduler.js to pre-filter
  *               the AirVPN US server list before picking a test candidate
+ * 2026-06-06  getAcceptedServers() no longer hits the gluetun control API — it now
+ *               returns a Set from the hardcoded config.GLUETUN_ACCEPTED_AIRVPN_SERVERS
+ *               list. The control-API route can't be whitelisted past gluetun's auth
+ *               middleware, so pre-filtering can't depend on gluetun being up at window
+ *               start. Kept async so the resilient signature in scheduler.js is untouched.
+ *               (The live `./vpn servers` CLI command still queries the API for ad-hoc
+ *               human inspection — that's a separate path.)
  */
 
 const Docker = require('dockerode');
@@ -283,30 +290,16 @@ async function tearDownTestContainers() {
 }
 
 /**
- * Returns a Set<string> of AirVPN server public_names that this gluetun
- * binary will accept. Pulls live from gluetun's /v1/servers/airvpn endpoint.
+ * Returns a Set<string> of AirVPN server names that gluetun will accept.
  *
- * Throws if gluetun is not running (connection refused) or if the API returns
- * an empty list (which would incorrectly filter out all candidates).
- * Callers that need resilience against gluetun being offline should use
- * resolveAcceptedServers() in scheduler.js instead — it adds a disk cache
- * fallback and a safe null return when neither source is available.
+ * TEMPORARY: reads from config.GLUETUN_ACCEPTED_AIRVPN_SERVERS, a hardcoded
+ * list extracted from gluetun's own startup error message. Async signature
+ * preserved for the future dynamic-fetch swap (HTTP + auth, or docker exec
+ * cat /gluetun/servers.json — both deferred until the simple thing works).
  */
 async function getAcceptedServers() {
   logger.fn(__filename, 'getAcceptedServers()', null);
-  const data = await httpClient.get(
-    config.GLUETUN_SERVERS_URL,
-    { timeout: 10000 },
-    'gluetun servers/airvpn'
-  );
-  const list = Array.isArray(data) ? data : (data?.servers || []);
-  const names = new Set();
-  for (const entry of list) {
-    const name = entry?.server_name || entry?.name;
-    if (name) names.add(name);
-  }
-  if (names.size === 0) throw new Error('gluetun returned no AirVPN server names');
-  return names;
+  return new Set(config.GLUETUN_ACCEPTED_AIRVPN_SERVERS);
 }
 
 async function restoreBaseContainers() {

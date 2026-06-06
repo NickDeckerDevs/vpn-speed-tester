@@ -18,12 +18,64 @@
  * 2026-05-14  Promoted MAX_CONSECUTIVE_FAILURES from hardcoded local in
  *               scheduler.js (was 2) to this config (now 5); centralises the
  *               threshold so it can be tuned without hunting through logic code
+ * 2026-06-06  Added GLUETUN_ACCEPTED_AIRVPN_SERVERS — hardcoded list of server
+ *               names gluetun v3.41.1 will accept, extracted verbatim from gluetun's
+ *               own startup error. getAcceptedServers() now returns this instead of
+ *               fetching the control API, so pre-filtering no longer depends on gluetun
+ *               being up at window start (GLUETUN_SERVERS_URL/ACCEPTED_SERVERS_PATH are
+ *               now only exercised by the live `./vpn servers` path). See the inline
+ *               TODO below for regenerating the list on gluetun upgrade.
  */
 
 if (!process.env.QBT_BASE_URL) throw new Error('QBT_BASE_URL is not set in .env');
 if (!process.env.QBT_PASSWORD) throw new Error('QBT_PASSWORD is not set in .env');
 
+// TEMPORARY: hardcoded list of AirVPN server names that gluetun v3.41.1's
+// bundled config will actually accept. Extracted verbatim from gluetun's own
+// startup error ("the choices available: ...") when given an unsupported
+// SERVER_NAMES value. Used to pre-filter the AirVPN status API's server list
+// so the queue never picks a server gluetun would reject (e.g. Dziban).
+//
+// TODO: replace with a dynamic fetch once we have a working path to gluetun's
+// server list (HTTP control API requires an API key and the /v1/servers/airvpn
+// route can't be whitelisted via auth.toml; the file at /gluetun/servers.json
+// inside the container is another option). For now: when gluetun is upgraded,
+// regenerate this list by running with an invalid SERVER_NAMES once and
+// copying the names out of the error message.
+const GLUETUN_ACCEPTED_AIRVPN_SERVERS = [
+  'Achernar','Achird','Adhara','Agena','Ain','Ainalrami','Aladfar','Alamak','Alathfar',
+  'Albaldah','Albali','Alchiba','Alcyone','Alderamin','Algieba','Algorab','Alhena',
+  'Aljanah','Alkurhah','Alnitak','Alphard','Alphecca','Alpheratz','Alphirk','Alrai',
+  'Alrami','Alruba','Alsephina','Alshain','Alshat','Alterf','Aludra','Alula','Alwaid',
+  'Alya','Alzirr','Ancha','Andromeda','Angetenar','Anser','Apus','Aquila','Arion',
+  'Arkab','Ascella','Asellus','Aspidiske','Asterion','Asterope','Atik','Atria','Auriga',
+  'Avior','Azmidiske','Baiten','Beemim','Benetnasch','Betelgeuse','Bharani','Biham',
+  'Bootes','Bunda','Caelum','Camelopardalis','Canis','Capella','Caph','Capricornus',
+  'Carinae','Castor','Celaeno','Cephei','Cepheus','Chalawan','Chamaeleon','Chara',
+  'Chertan','Chort','Chow','Circinus','Columba','Comae','Copernicus','Crater','Cujam',
+  'Cygnus','Dalim','Delphinus','Denebola','Diadema','Diphda','Dorado','Dubhe','Edasich',
+  'Elkurud','Elnath','Eltanin','Enif','Equuleus','Eridanus','Fang','Fawaris','Felis',
+  'Fleed','Fomalhaut','Fulu','Garnet','Gemini','Geminorum','Gianfar','Giausar','Gienah',
+  'Ginan','Gorgonea','Groombridge','Grus','Haedus','Hamal','Hassaleh','Helvetios',
+  'Hercules','Horologium','Hyadum','Hydra','Hydrus','Iklil','Imai','Indus','Intercrus',
+  'Iskandar','Jabbah','Kajam','Kitalpha','Kitel','Kocab','Kruger','Lacaille','Lacerta',
+  'Larawag','Leo','Lesath','Libra','Lich','Luhman','Lupus','Luyten','Maasym','Markab',
+  'Marsic','Matar','Mebsuta','Meissa','Mekbuda','Meleph','Melnick','Menkab','Menkalinan',
+  'Menkent','Mensa','Merga','Mesarthim','Metallah','Minchir','Mintaka','Mirach','Miram',
+  'Mirfak','Mirzam','Muhlifain','Muphrid','Musca','Muscida','Musica','Nahn','Naos','Nash',
+  'Nashira','Norma','Okab','Ophiuchus','Orbitar','Orion','Pegasus','Phact','Phaet',
+  'Phoenix','Piautos','Pisces','Pleione','Polis','Praecipua','Pyxis','Ran','Regulus',
+  'Ross','Rotanev','Rukbat','Saclateni','Sadachbia','Sadalbari','Sadr','Saiph','Salm',
+  'Sargas','Schedir','Sculptor','Scuti','Scutum','Sextans','Sham','Sharatan','Sheliak',
+  'Sirrah','Situla','Sneden','Struve','Sualocin','Subra','Suhail','Superba','Taiyi',
+  'Talitha','Taphao','Tarazed','Taurus','Teegarden','Tegmen','Tejat','Telescopium',
+  'Tiaki','Tianguan','Tianyi','Titawin','Triangulum','Tucana','Turais','Tyl','Ukdah',
+  'Ursa','Veritate','Virgo','Volans','Vulpecula','Wazn','Westerlund','Wurren','Xuange',
+  'Zibal','Zuben',
+];
+
 module.exports = {
+  GLUETUN_ACCEPTED_AIRVPN_SERVERS,
   AIRVPN_STATUS_URL:    'https://airvpn.org/api/status',
   GLUETUN_CONTROL_URL:  'http://gluetun-speedtest:8000/v1/vpn/status',
   // Gluetun's bundled server list — used to pre-filter candidates to only
