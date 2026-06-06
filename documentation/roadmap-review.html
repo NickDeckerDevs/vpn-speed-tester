@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Roadmap Review — VPN Speed Tester → Media-Stack Manager</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel2: #273449; --ink: #e2e8f0;
+    --muted: #94a3b8; --line: #334155; --accent: #38bdf8; --green: #34d399;
+    --amber: #fbbf24; --red: #f87171; --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+  header h1 { font-size: 28px; margin: 0 0 6px; }
+  header p.sub { color: var(--muted); margin: 0 0 18px; }
+  .banner {
+    background: linear-gradient(90deg, #1e293b, #273449);
+    border: 1px solid var(--line); border-left: 4px solid var(--amber);
+    border-radius: 10px; padding: 14px 18px; margin: 0 0 28px; color: var(--ink);
+  }
+  .banner strong { color: var(--amber); }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 26px; }
+  .pill {
+    font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    border: 1px solid var(--line);
+  }
+  .pill.decided { color: var(--green); border-color: #166534; background: #052e1a; }
+  .pill.proposed { color: var(--accent); border-color: #155e75; background: #042f3a; }
+  .pill.deferred { color: var(--amber); border-color: #854d0e; background: #2a1c02; }
+
+  h2.section { font-size: 20px; margin: 34px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+
+  /* stat cards */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 12px; margin: 16px 0 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .stat .num { font-size: 26px; font-weight: 700; color: var(--accent); }
+  .stat .lbl { font-size: 13px; color: var(--muted); }
+
+  /* two-copies comparison */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+  @media (max-width: 680px) { .compare { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card.real { border-top: 3px solid var(--green); }
+  .card.exp  { border-top: 3px solid var(--purple); }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card .tag { font-size: 12px; color: var(--muted); display:block; margin-bottom:10px; }
+  .card ul { margin: 0; padding-left: 18px; }
+  .card li { margin: 4px 0; font-size: 14px; }
+
+  /* keepers */
+  .keepers { display: grid; gap: 12px; margin: 12px 0; }
+  .keeper { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--purple); border-radius: 10px; padding: 14px 16px; }
+  .keeper b { color: var(--purple); }
+
+  /* collapsible pieces */
+  details.piece {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    margin: 12px 0; overflow: hidden;
+  }
+  details.piece > summary {
+    cursor: pointer; list-style: none; padding: 16px 18px; display: flex;
+    align-items: center; gap: 12px; font-weight: 600; font-size: 17px;
+  }
+  details.piece > summary::-webkit-details-marker { display: none; }
+  details.piece > summary .chev { color: var(--muted); transition: transform .2s; margin-left: auto; }
+  details.piece[open] > summary .chev { transform: rotate(90deg); }
+  .num-badge {
+    flex: none; width: 28px; height: 28px; border-radius: 8px; background: var(--panel2);
+    color: var(--accent); font-size: 14px; display: grid; place-items: center; border: 1px solid var(--line);
+  }
+  .piece-body { padding: 0 18px 18px; border-top: 1px solid var(--line); }
+  .piece-body .plain { margin-top: 14px; }
+  .label-plain { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--green); font-weight: 700; }
+  .label-tech  { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 700; }
+
+  details.tech { margin-top: 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; }
+  details.tech > summary { cursor: pointer; padding: 10px 14px; font-size: 14px; color: var(--accent); list-style: none; }
+  details.tech > summary::-webkit-details-marker { display: none; }
+  details.tech .tech-body { padding: 0 14px 14px; font-size: 14px; color: var(--ink); }
+  code { background: #0b1220; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; font-size: 13px; color: #cbd5e1; }
+  .warn { border-left: 3px solid var(--red); background: #2a0d0d; padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
+  .warn b { color: var(--red); }
+  ul.tight li { margin: 5px 0; }
+  footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .toolbar { display:flex; gap:10px; margin: 0 0 22px; }
+  .btn { background: var(--panel2); border:1px solid var(--line); color: var(--ink); padding:7px 13px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .btn:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Roadmap Review</h1>
+    <p class="sub">VPN Speed Tester → Media-Stack Manager · prepared 2026-06-02</p>
+  </header>
+
+  <div class="banner">
+    <strong>Read me first.</strong> Nothing here has been done. This page exists so you can sit
+    with the plan and decide. No commits, no stash, no pull, no deploy, no changes to the NAS.
+    Each section opens to a plain-English summary; technical detail is tucked behind a “details”
+    toggle.
+  </div>
+
+  <div class="toolbar">
+    <button class="btn" onclick="document.querySelectorAll('details').forEach(d=>d.open=true)">Expand all</button>
+    <button class="btn" onclick="document.querySelectorAll('details').forEach(d=>d.open=false)">Collapse all</button>
+  </div>
+
+  <div class="legend">
+    <span class="pill decided">● Decided</span>
+    <span class="pill proposed">● Proposed</span>
+    <span class="pill deferred">● Deferred / your call</span>
+  </div>
+
+  <!-- PART 1 -->
+  <h2 class="section">Part 1 — Where things actually stand</h2>
+
+  <p><b>The speed tester worked, and it’s been quietly doing its job for almost a month.</b>
+  Running on the NAS since May 8, it has collected a real pile of data. The original goal —
+  measure real throughput across AirVPN servers so we can pick good ones — is basically
+  <b>done</b>.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="num">371</div><div class="lbl">completed test sessions (~1,100 runs)</div></div>
+    <div class="stat"><div class="num">602</div><div class="lbl">hourly server-load snapshots</div></div>
+    <div class="stat"><div class="num">25</div><div class="lbl">days of logs (May 8 → Jun 1)</div></div>
+  </div>
+
+  <p style="margin-top:22px"><b>There are two copies of the code, and they drifted apart.</b>
+  This is the confusing part — now explained:</p>
+
+  <div class="compare">
+    <div class="card real">
+      <h3>🖥️ Desktop copy <span style="color:var(--green)">— the real one</span></h3>
+      <span class="tag">Committed to GitHub · deployed to the NAS · running now</span>
+      <ul>
+        <li>Has <b>server filtering</b> (remembers reachable/good servers, skips bad ones)</li>
+        <li>This is what produced all the data above</li>
+        <li>The source of truth going forward</li>
+      </ul>
+    </div>
+    <div class="card exp">
+      <h3>💻 This laptop <span style="color:var(--purple)">— a side experiment</span></h3>
+      <span class="tag">Uncommitted · never deployed</span>
+      <ul>
+        <li>The refactor you “started but couldn’t find” — it was here, not on the deploy machine</li>
+        <li>Has some genuinely nice improvements (see Piece 1)</li>
+        <li>Missing the desktop’s server filtering</li>
+      </ul>
+    </div>
+  </div>
+
+  <p><b>The roadmap document is badly out of date.</b> It still says the project is blocked on a
+  VPN-tunnel bug that was fixed weeks ago. A reader would think nothing works — when in reality
+  everything works and has for a month.</p>
+
+  <p><span class="pill decided">● Decided</span> &nbsp;Leave the NAS alone and let it keep
+  collecting for ~60 more days. Revisit around <b>Aug 1, 2026</b>, then decide whether to switch
+  the speed tester off and move to manual/automatic server selection using the data.</p>
+
+  <!-- PART 2 -->
+  <h2 class="section">Part 2 — The six pieces of this plan</h2>
+  <p>In order. The first is bookkeeping; the big one is last. The only thing produced
+  <i>this session</i> is this page — we are not building any of it yet.</p>
+
+  <!-- PIECE 1 -->
+  <details class="piece" open>
+    <summary><span class="num-badge">1</span> Save the good ideas from the laptop experiment
+      <span class="pill proposed">● Proposed</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      Before we ever reset this laptop to the real code, write down the improvements made here so
+      they can be re-added on top of the real version later. Don’t throw the baby out with the
+      bathwater.</p>
+
+      <div class="keepers">
+        <div class="keeper"><b>Keeper 1 — One run-function instead of two.</b> The real code has
+          two separate files for “run once” vs. “run forever.” The laptop merged them into a
+          single cleaner piece with a simple mode switch. Easier to understand and maintain.</div>
+        <div class="keeper"><b>Keeper 2 — Sturdier container handling.</b> When swapping VPN
+          servers the tool destroys and recreates Docker containers. The laptop added a step that
+          waits and confirms the old container is fully gone before making the new one — preventing
+          “name already in use” crashes — and logs failures more clearly.</div>
+        <div class="keeper"><b>Keeper 3 — Cleaner command flags.</b> Tidier
+          <code>--single</code> / <code>--infinite</code> startup options.</div>
+      </div>
+
+      <details class="tech"><summary>Technical detail</summary>
+        <div class="tech-body">
+          <ul class="tight">
+            <li><b>Keeper 1:</b> laptop’s <code>orchestrator/runner.js</code>
+              (<code>run({ mode })</code>, <code>MODES</code> = WINDOW/SINGLE/INFINITE) replaces the
+              desktop’s <code>infiniteRunner.js</code> + <code>scheduler.runSpeedTestWindow()</code>.</li>
+            <li><b>Keeper 2:</b> laptop’s <code>gluetunManager.js</code> adds
+              <code>waitForContainerRemoved()</code>, <code>tearDownDockerContainer()</code>,
+              <code>logContainerStatus()</code>, <code>logDockerError()</code>; renames
+              <code>ensureSpeedtestRunner → verifyTestContainersRunning</code> and
+              <code>tearDownTestContainers → tearDownSpeedTestingContainers</code>.</li>
+            <li><b>Keeper 3:</b> laptop’s <code>main.js</code> flag dispatch.</li>
+          </ul>
+          <div class="warn"><b>Must NOT lose from the desktop version when porting:</b>
+            server filtering (<code>accepted-servers.json</code> /
+            <code>unreachable-servers.json</code>, <code>getAcceptedServers()</code>, the
+            <code>ACCEPTED_SERVERS_PATH</code> / <code>UNREACHABLE_SERVERS_PATH</code> config keys),
+            <code>rebuildResults.js</code>, <code>GLUETUN_SERVERS_URL</code>, and
+            <code>MAX_CONSECUTIVE_FAILURES: 5</code> (laptop has 3).</div>
+          <p style="color:var(--muted)">This piece is just a written note — no code changes now.</p>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- PIECE 2 -->
+  <details class="piece">
+    <summary><span class="num-badge">2</span> Make the desktop / GitHub version the official one
+      <span class="pill deferred">● Deferred / your call</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      Going forward, the desktop/GitHub copy is the source of truth. The plan to reset this laptop
+      to match it (set the experiment aside, pull the real code) is documented here but
+      <b>deliberately not done</b> — you wanted time to decide. When ready it’s a two-command
+      operation, and the keepers from Piece 1 are safely written down.</p>
+
+      <details class="tech"><summary>Technical detail</summary>
+        <div class="tech-body">
+          <p>The laptop is on a diverged branch (5 local commits vs 11 on origin). The eventual
+          reset is <code>git stash</code> (or branch the experiment) → <code>git pull</code>.</p>
+          <div class="warn"><b>Until the laptop is reset, do not run <code>deploy.sh</code> from
+          this laptop.</b> It syncs via <code>rsync</code> with <b>no <code>--delete</code></b>, so
+          deploying the wrong machine leaves orphan files behind and could regress server
+          filtering — which is exactly how the drift happened.</div>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- PIECE 3 -->
+  <details class="piece">
+    <summary><span class="num-badge">3</span> Rewrite the roadmap to tell the truth
+      <span class="pill proposed">● Proposed</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      Replace the stale roadmap with one that says: Phase 1 is complete, here’s the data we have,
+      here’s the decision to let it run ~60 more days, and here are the next chapters (Pieces 4–6).
+      Keep the old bug history in the existing “historical” folder so nothing is erased — just no
+      longer front-and-center.</p>
+      <details class="tech"><summary>Technical detail</summary>
+        <div class="tech-body">
+          Rewrite <code>documentation/roadmap-working.md</code>; collapse the resolved
+          P0.5 / P0 / P1 sections into a one-line pointer to
+          <code>verified-completed-historical-only/</code>; record the ~60-day revisit (≈2026-08-01).
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- PIECE 4 -->
+  <details class="piece">
+    <summary><span class="num-badge">4</span> Bring the data home
+      <span class="pill proposed">● Proposed</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      A small script you run from the laptop that copies the collected data (results, snapshots,
+      raw numbers) down from the NAS into a folder here, so it can be analyzed without touching the
+      live system. Logs are big (~54&nbsp;MB) so they’re optional, behind a flag.</p>
+      <details class="tech"><summary>Technical detail</summary>
+        <div class="tech-body">
+          New <code>fetch-nas-data.sh</code>, modeled on <code>deployAndTestOne.sh</code> (reads
+          <code>SYSOP_SSH</code> from <code>.env</code>, <code>ssh -p 8322</code>). Read-only pull
+          of <code>results.json</code>, <code>raw-results.json</code>, <code>server-data.json</code>,
+          <code>snapshots/</code>, <code>accepted-servers.json</code>,
+          <code>unreachable-servers.json</code> into <code>analysis/nas-data/</code>; logs behind
+          <code>--with-logs</code>. Add <code>analysis/nas-data/</code> to <code>.gitignore</code>.
+          Add <code>analysis/README.md</code> describing each file’s shape and seeding ideas.
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- PIECE 5 -->
+  <details class="piece">
+    <summary><span class="num-badge">5</span> Analyze the data (open-ended, later)
+      <span class="pill deferred">● Deferred / your call</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      Once the data is local, dig into it. You don’t know yet exactly what you want to learn —
+      that’s fine. Natural starting questions:</p>
+      <ul class="tight">
+        <li>Which server (and which city) is fastest, and at what hours?</li>
+        <li>Does a server’s “load %” actually predict real speed, or not?</li>
+        <li>Which servers are reliably good vs. flaky?</li>
+        <li>Best time of day to connect for the lowest load?</li>
+      </ul>
+      <details class="tech"><summary>Technical detail</summary>
+        <div class="tech-body">
+          No tooling commitment yet; the existing report already charts some of this
+          (<code>report/index.html</code>). Exploratory — fleshed out after Piece 4.
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- PIECE 6 -->
+  <details class="piece" open>
+    <summary><span class="num-badge">6</span> The pivot: a control panel for your whole media server
+      <span class="pill deferred">● Deferred / your call</span><span class="chev">▶</span></summary>
+    <div class="piece-body">
+      <p class="plain"><span class="label-plain">Plain English</span><br/>
+      Turn what this project learned into a <b>single control panel for your entire media stack</b>
+      (the Jellyfin / qBittorrent / Radarr / Sonarr setup). A web page on the NAS where you can:</p>
+      <ul class="tight">
+        <li><b>See the logs</b> from a browser (no SSH needed).</li>
+        <li><b>Switch the VPN to a faster server</b> — using the speed data we collected — and have
+          everything come back up cleanly.</li>
+        <li><b>Shut the stack down and bring it back up</b> with a button.</li>
+        <li><b>Let family request movies/shows</b> to download.</li>
+      </ul>
+      <p>And do it <b>without constantly rebuilding Docker</b>: mount this project’s code as a
+      folder the NAS reads directly, so you tweak code and it just picks it up — only rebuilding
+      the image in rare cases.</p>
+
+      <p class="plain"><span class="label-plain">How it would work</span></p>
+      <ul class="tight">
+        <li>A small always-on “manager” service joins the media stack. It can talk to Docker (to
+          restart/recreate containers) and to qBittorrent/Radarr/Sonarr (to control them and add
+          requests).</li>
+        <li>A simple web page is the front door. Logs already get written to a data folder, so
+          showing them is mostly serving that folder. The existing reverse proxy
+          (<code>caddy</code>) can give it a clean URL.</li>
+        <li>Server-switching reuses the exact machinery this project already built.</li>
+      </ul>
+
+      <div class="warn"><b>The one big catch.</b> In the media stack, <b>one VPN container is
+      shared by everything</b> (qBittorrent, Radarr, Sonarr, Lidarr, Prowlarr, Byparr,
+      Speedtest-tracker all route through it). So “switch the VPN server” isn’t a one-container
+      operation like in the speed tester — it means recreating the VPN container <i>and every
+      service attached to it, in the right order.</i> That’s the main thing the manager must get
+      right.</div>
+
+      <details class="tech"><summary>Technical detail — what gets reused & how</summary>
+        <div class="tech-body">
+          <p><b>Reused from this repo:</b></p>
+          <ul class="tight">
+            <li><code>orchestrator/gluetunManager.js</code> — destroy/recreate/wait-for-tunnel cycle.</li>
+            <li><code>orchestrator/qbtClient.js</code> — qBittorrent control (v5 <code>stop</code>/<code>start</code> quirk).</li>
+            <li><code>orchestrator/logger.js</code>, <code>orchestrator/httpClient.js</code> — logging + HTTP error handling.</li>
+            <li><code>report-server</code> nginx pattern + <code>report/index.html</code> — serving a UI + the data folder.</li>
+            <li><code>deploy.sh</code> rsync pattern — but <b>add <code>--delete</code></b> to avoid the orphan-file problem that caused the drift.</li>
+          </ul>
+          <p><b>Server-selection tie-in:</b> the production VPN is configured by <i>city/country</i>;
+          to pin a specific tested-fast server we set <code>SERVER_NAMES</code> (same trick the
+          speed tester uses) chosen from the data collected in Pieces 4–5.</p>
+          <p><b>Other next-step ideas to capture:</b></p>
+          <ul class="tight">
+            <li>Health/watchdog for the arr stack (alert if something silently dies).</li>
+            <li>Disk-space alerts and automated file cleanup/moves.</li>
+            <li>Phone / Home-Assistant notifications on a VPN switch or failure.</li>
+            <li>Off-the-shelf request UIs (Overseerr/Jellyseerr) vs. a lightweight custom one — note the trade-off, don’t decide yet.</li>
+          </ul>
+          <p style="color:var(--muted)">Piece 6 becomes a handoff document
+          (<code>documentation/media-stack-manager-handoff.md</code>) when you decide to build it.</p>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- DECISIONS -->
+  <h2 class="section">Decisions waiting on you</h2>
+  <ul class="tight">
+    <li><b>Piece 2:</b> when (and whether) to reset this laptop to the desktop/GitHub version.</li>
+    <li><b>Piece 5:</b> what questions you actually want the data to answer.</li>
+    <li><b>Piece 6:</b> green-light the media-stack control panel — and the off-the-shelf-vs-custom
+      call for family download requests.</li>
+    <li><b>Around Aug 1, 2026:</b> keep the speed tester running, switch it off, or move to
+      automatic server selection.</li>
+  </ul>
+
+  <footer>
+    Status: <b>nothing executed.</b> No commits, no stash, no pull, no deploy, no roadmap edits,
+    no NAS changes. The roadmap rewrite, data-fetch script, and handoff doc are <i>planned</i>
+    above and only get created when you say go. · Source plan:
+    <code>~/.claude/plans/i-think-we-have-compressed-creek.md</code>
+  </footer>
+
+</div>
+</body>
+</html>
