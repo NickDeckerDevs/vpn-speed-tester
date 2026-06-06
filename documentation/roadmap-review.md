@@ -123,8 +123,8 @@ P0.5/P0/P1 sections into a one-line pointer to `verified-completed-historical-on
 snapshots, raw numbers) down from the NAS into a folder here, so it can be analyzed without
 touching the live system. Logs are big (~54 MB) so they're optional, behind a flag.
 
-**Technical detail:** new `fetch-nas-data.sh`, modeled on `deployAndTestOne.sh` (reads `SYSOP_SSH`
-from `.env`, `ssh -p 8322`). Read-only pull of
+**Technical detail:** `./vpn fetch` (reads `SYSOP_SSH` from `.env`, SSHes in via the keyed
+connection from `lib.sh`). Read-only pull of
 `/volume1/Docker/vpn-speed-tester/data/{results.json, raw-results.json, server-data.json,
 snapshots/, accepted-servers.json, unreachable-servers.json}` into `analysis/nas-data/`; logs
 behind `--with-logs`. Add `analysis/nas-data/` to `.gitignore`. Add `analysis/README.md` describing

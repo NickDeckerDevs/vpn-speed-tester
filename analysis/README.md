@@ -3,8 +3,8 @@
 Local workspace for analyzing the speed-test data collected on the NAS. Pull the data with:
 
 ```sh
-./fetch-nas-data.sh              # data files + snapshots/
-./fetch-nas-data.sh --with-logs  # also pull logs/ (~54 MB)
+./vpn fetch              # data files + snapshots/
+./vpn fetch --with-logs  # also pull logs/ (~54 MB)
 ```
 
 This pulls **read-only** into `nas-data/` (git-ignored — see [.gitignore](../.gitignore)). The live

@@ -43,7 +43,7 @@ selection driven by the collected data.
 
 ### Bring the data home
 Read-only pull of the collected data from the NAS into a local `analysis/nas-data/` folder for
-offline analysis — `fetch-nas-data.sh`. Does not touch the live stack. See
+offline analysis — `./vpn fetch`. Does not touch the live stack. See
 [`analysis/README.md`](../analysis/README.md).
 
 ### Analyze the data (open-ended)

@@ -271,8 +271,8 @@
       live system. Logs are big (~54&nbsp;MB) so they’re optional, behind a flag.</p>
       <details class="tech"><summary>Technical detail</summary>
         <div class="tech-body">
-          New <code>fetch-nas-data.sh</code>, modeled on <code>deployAndTestOne.sh</code> (reads
-          <code>SYSOP_SSH</code> from <code>.env</code>, <code>ssh -p 8322</code>). Read-only pull
+          <code>./vpn fetch</code> (reads <code>SYSOP_SSH</code> from <code>.env</code>, SSHes in via
+          the keyed connection from <code>lib.sh</code>). Read-only pull
           of <code>results.json</code>, <code>raw-results.json</code>, <code>server-data.json</code>,
           <code>snapshots/</code>, <code>accepted-servers.json</code>,
           <code>unreachable-servers.json</code> into <code>analysis/nas-data/</code>; logs behind
