@@ -1,7 +1,7 @@
 # Roadmap — Working Document
 
 **Project:** AirVPN Speed Tester
-**Last Updated:** 2026-06-05
+**Last Updated:** 2026-06-06
 **Phase 1 Status:** ✅ Complete — built, deployed, and collecting data on the NAS since 2026-05-08.
 
 This is a living document. Update it when priorities shift or new ideas surface.
@@ -31,11 +31,37 @@ longer front-and-center.
 At that point decide: keep running / switch the speed tester off / move to automatic server
 selection driven by the collected data.
 
-> ⚠️ **Do not run `deploy.sh` from the laptop** until the laptop is reset to match `origin/master`.
-> `deploy.sh` uses `rsync` **without `--delete`**, so deploying from a stale machine leaves orphan
-> files behind and can regress server-filtering — exactly how the desktop/laptop drift happened.
-> See [laptop-experiment-keepers.md](this-is-my-mess/laptop-experiment-keepers.md). The long-term fix for this whole
-> class of problem is tracked in [deployment-upgrade-options.md](deployment-upgrade-options.md).
+> ⚠️ **Hold off on `./vpn deploy` until the deployment upgrade is in place.** The git reconciliation
+> has now landed (local is the committed source of truth, `origin/master` in sync — see
+> [this-is-my-mess/](this-is-my-mess/)), so the original "stale machine" risk is resolved. But the
+> rsync deploy still has **no `--delete` and no excludes**, so a deploy now would re-push docs/cruft
+> onto the freshly-pruned NAS and can't remove orphans. The durable fix is tracked in
+> [deployment-upgrade-options.md](deployment-upgrade-options.md). Background on the drift this caused:
+> [this-is-my-mess/laptop-experiment-keepers.md](this-is-my-mess/laptop-experiment-keepers.md).
+
+---
+
+## 🔴 Active priorities (2026-06-06)
+
+1. **[PRIORITY] Caddy reverse-proxy is crash-looping.** The `caddy` container on the NAS is stuck
+   `Restarting`; it fails to start with:
+   `adapting config … parsing caddyfile tokens for 'email': wrong argument count … at /etc/caddy/Caddyfile:2`
+   — the global `email` option on line 2 has no argument (most likely `ACME_EMAIL` is unset/empty in the
+   stack env, so `email {$ACME_EMAIL}` collapses to bare `email`). **Not in this repo:** Caddy lives in the
+   separate `media-server-v4` Portainer stack (config in the `waitress` repo + on the NAS at
+   `/volume1/Docker/caddy/Caddyfile`); the fix belongs there. **Effect:** the named HTTPS URL
+   `https://vpn-report.waitress.nickdeckerdevs.com` is down until Caddy starts (the plain
+   `http://10.1.10.254:<port>` path is unaffected). What Caddy is and how it's wired to this project:
+   [2026-05-14-caddy-https-integration.md](2026-05-14-caddy-https-integration.md).
+   - *Verify while in there:* the report's published port — `report-server` currently publishes **:9192**,
+     while the docs and Caddy's `reverse_proxy` reference **:9191**. If the port moved, Caddy's backend
+     **and** the README/report docs need updating.
+
+2. **Deployment upgrade — now unblocked.** The desktop/laptop reconciliation (the former blocker) has
+   landed. Until the upgrade ships, the rsync deploy has no `--delete`/excludes, so the next `./vpn deploy`
+   re-pushes docs/cruft to the NAS — i.e. don't deploy casually. Plan + options (leaning: GHCR + GitHub
+   Actions + Portainer image-based deploy): [deployment-upgrade-options.md](deployment-upgrade-options.md).
+   To be run as its **own deliberate plan**, after the Caddy issue.
 
 ---
 
@@ -55,16 +81,15 @@ Once local, dig in. Starting questions:
 
 The existing report (`report/index.html`) already charts some of this.
 
-### Deployment & repo-structure upgrade
-The current deploy flow (`deploy.sh` = `rsync` **without `--delete`**, run from whichever machine,
-and **no git on the NAS code at all**) is the root cause of the drift documented in
-[`this-is-my-mess/orchestrator-comparison.md`](this-is-my-mess/orchestrator-comparison.md). The leaning fix is
-to **build our own Docker image** (GHCR + GitHub Actions building `linux/amd64` + a Portainer
-redeploy webhook, reusing the Portainer already running on the ASUSTOR AS5404T), with pull-based git
-and `rsync --delete` kept as lower-effort fallbacks. Full menu, verified environment, and trade-offs
-in [deployment-upgrade-options.md](deployment-upgrade-options.md). **Sequenced after** the desktop
-reconciliation lands and the real NAS code is committed — we don't re-platform code we don't yet
-trust.
+### Deployment & repo-structure upgrade  → see "Active priorities" above
+The current deploy flow (`./vpn deploy` = `rsync` **without `--delete`** and **without excludes**, run
+from whichever machine, with **no git on the NAS code at all**) is the root cause of the drift documented
+in [`this-is-my-mess/orchestrator-comparison.md`](this-is-my-mess/orchestrator-comparison.md). The leaning
+fix is to **build our own Docker image** (GHCR + GitHub Actions building `linux/amd64` + a Portainer
+redeploy webhook, reusing the Portainer already running on the ASUSTOR AS5404T), with pull-based git and
+`rsync --delete` kept as lower-effort fallbacks. Full menu, verified environment, and trade-offs in
+[deployment-upgrade-options.md](deployment-upgrade-options.md). **Now unblocked** — the desktop
+reconciliation has landed and the real NAS code is committed; this is the active infra track (after Caddy).
 
 ### The pivot — media-stack control panel (green-lit)
 Turn what this project learned into a single control panel for the whole media stack
