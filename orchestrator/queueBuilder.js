@@ -1,9 +1,17 @@
+/*
+6/6/2026 - nick decker | Refactor
+CHANGED
+- pickNextServer(liveServers, results, opts) now accepts an opts.alwaysPick flag — when all servers have current-tier coverage, default behavior still returns null, but infinite mode passes alwaysPick=true to keep cycling the least-tested server (fewest sessions, oldest)
+- added logging to distinguish "missing coverage" from "all covered — picking least-tested"
+*/
+
 const logger = require('./logger');
 
-function pickNextServer(liveServers, results) {
+function pickNextServer(liveServers, results, opts = {}) {
   logger.fn(__filename, 'pickNextServer', {
     liveServerCount: liveServers.length,
     resultsSessionCount: results.length,
+    alwaysPick: !!opts.alwaysPick,
   });
 
   const scored = liveServers.map(server => {
@@ -22,12 +30,16 @@ function pickNextServer(liveServers, results) {
 
   const anyMissingCoverage = scored.some(s => !s.hasTierCoverage);
 
-  if (!anyMissingCoverage) {
+  if (!anyMissingCoverage && !opts.alwaysPick) {
     logger.info('pickNextServer: all servers have current-tier coverage — coverage complete');
     return null;
   }
 
-  logger.info('pickNextServer: anyMissingCoverage=true');
+  if (anyMissingCoverage) {
+    logger.info('pickNextServer: anyMissingCoverage=true');
+  } else {
+    logger.info('pickNextServer: all covered — picking least-tested (fewest sessions, oldest)');
+  }
 
   scored.sort((a, b) => {
     if (!a.hasTierCoverage && b.hasTierCoverage) return -1;

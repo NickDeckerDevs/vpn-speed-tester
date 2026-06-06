@@ -22,6 +22,8 @@
  *               and filters liveServers to only gluetun-accepted candidates;
  *               unreachable report written once per window (unreachableLoggedThisWindow)
  * 2026-05-14  MAX_CONSECUTIVE_FAILURES moved to config.js (was local const = 2, now = 5)
+ * 2026-05-14  Added opts.infinite mode to runSpeedTestWindow() — loops indefinitely,
+ *               resetting coverage when all servers are tested; replaces infiniteRunner.js
  */
 
 const cron = require('node-cron');
@@ -134,7 +136,8 @@ async function runSpeedTestWindow(opts = {}) {
 
   const windowStart = new Date();
   const windowEnd = new Date(windowStart.getTime() + config.TEST_WINDOW_HOURS * 60 * 60 * 1000);
-  logger.info(`=== Speed test window START === ends at ${windowEnd.toISOString()}`);
+  const modeLabel = opts.infinite ? 'INFINITE (no time limit)' : opts.singleRun ? 'SINGLE' : `ends at ${windowEnd.toISOString()}`;
+  logger.info(`=== Speed test window START === mode: ${modeLabel}`);
 
   // ── Step 1: Pre-flight ────────────────────────────────────────
   logger.info('PRE-FLIGHT: pausing qBittorrent...');
@@ -160,7 +163,7 @@ async function runSpeedTestWindow(opts = {}) {
   let consecutiveFailures = 0;
   let unreachableLoggedThisWindow = false;
 
-  while (Date.now() < windowEnd.getTime()) {
+  while (opts.infinite || Date.now() < windowEnd.getTime()) {
     logger.info('Fetching live AirVPN status...');
     const liveServersRaw = await fetchUSServers();
 
@@ -181,14 +184,14 @@ async function runSpeedTestWindow(opts = {}) {
       }
     }
 
-    const server = pickNextServer(liveServers, results);
+    const server = pickNextServer(liveServers, results, { alwaysPick: !!opts.infinite });
 
     if (!server) {
       logger.info('No eligible servers — coverage complete, ending window early');
       break;
     }
 
-    if (Date.now() >= windowEnd.getTime()) {
+    if (!opts.infinite && Date.now() >= windowEnd.getTime()) {
       logger.info('Window boundary reached — stopping before next session');
       break;
     }
@@ -273,7 +276,8 @@ async function runSpeedTestWindow(opts = {}) {
   await resumeAll();
 
   const durationMin = Math.round((Date.now() - windowStart.getTime()) / 60000);
-  logger.info(`=== Speed test window END === ${serversTestedThisWindow.length} servers in ${durationMin} min`);
+  const modeDesc = opts.infinite ? 'infinite' : opts.singleRun ? 'single' : 'timed window';
+  logger.info(`=== Speed test window END === ${serversTestedThisWindow.length} servers in ${durationMin} min (${modeDesc})`);
   for (const { serverName, tier } of serversTestedThisWindow) {
     logger.info(`  ✓ ${serverName} — ${tier}`);
   }
