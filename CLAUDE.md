@@ -191,3 +191,7 @@ Secrets with `$` in them must be single-quoted in `.env`. See [memory/feedback_e
 ## Reference docs
 
 Deeper specs live in [documentation/](documentation/): `vpn-speed-tester-spec.md` (full spec), `front-end-reporting.md` (report internals), `project-files.md`, `roadmap-working.md`, `get-started-keep-going.md`. Read these before large changes.
+
+Two more folders worth knowing:
+- [documentation/this-is-my-mess/](documentation/this-is-my-mess/) — the laptop/desktop/NAS git-divergence investigation (handoff, findings, byte-comparison, salvage notes). See its `README.md` for the story.
+- [media-stack/](media-stack/) — seeds for the parallel/next project this speed-tester was built to serve (the media-stack control panel). Not wired into this repo's stack.

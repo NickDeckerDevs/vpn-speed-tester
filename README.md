@@ -1,6 +1,6 @@
 # VPN Speed Tester
 
-Node orchestrator that runs nightly speed tests against AirVPN US WireGuard servers from a Synology NAS. Cycles a single `gluetun` container through each server, runs `speedtest-cli` from a sibling container sharing gluetun's network namespace, and writes results to JSON files served by an nginx report container.
+Node orchestrator that runs nightly speed tests against AirVPN US WireGuard servers from an ASUSTOR AS5404T NAS. Cycles a single `gluetun` container through each server, runs `speedtest-cli` from a sibling container sharing gluetun's network namespace, and writes results to JSON files served by an nginx report container.
 
 There is no local dev loop for the orchestrator — it must run on the NAS because it talks to the local docker socket, gluetun's control API, and a LAN qBittorrent instance. You drive everything from your laptop via the `./vpn` script.
 

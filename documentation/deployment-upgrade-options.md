@@ -16,7 +16,7 @@ decision document.
 
 | Thing | Reality |
 |---|---|
-| NAS | **ASUSTOR AS5404T**, ADM 5.1.3 — *not* Synology (the project `CLAUDE.md` is wrong on this) |
+| NAS | **ASUSTOR AS5404T**, ADM 5.1.3 — *not* Synology |
 | CPU | **x86_64 / amd64** (Intel Celeron N5105) — standard arch, no ARM complications |
 | Docker | **28.1.1** |
 | Compose | **v2.35.1** (full `docker compose` v2) |
