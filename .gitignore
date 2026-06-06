@@ -7,3 +7,4 @@ node_modules/
 analysis/nas-data/
 nas-clone/
 .DS_Store
+data/
