@@ -87,26 +87,31 @@ Present on the NAS snapshot, absent from the desktop working tree:
 unused, superseded by the desktop's consolidation (the `vpn` CLI replaced the individual shell
 scripts; `package.json` runs `node main.js --infinite`, not `runner.js`/`infiniteRunner.js`). Grep
 confirms `vpn`/`vpn-ui`/`docker-compose`/`main.js` invoke **none** of them (only `rebuildResults.js`,
-which is present and kept). **The user's stated next step is to remove them from the NAS as well**, to
-get a cleaner install. So these are not "stale accidents" to preserve — they are pending cleanup. (The
-NAS removal is a separate, deliberate action to be done with care; this session does not touch the
-NAS.)
+which is present and kept). So these are not "stale accidents" to preserve — they were pending cleanup.
+**→ DONE 2026-06-06: removed from the live NAS (full backup taken first), and the scope was broadened
+to remove *all* docs/`.md` from the NAS. See §7 for the execution record.**
 
 ## 5. Gaps / unknowns
 
 - **Live-NAS re-verification not performed.** Findings are against the 2026-06-05 `nas-snapshot`, not
   a fresh read of the live NAS. If the NAS changed since 2026-06-05, the two UI files (or others)
   could have drifted again. *To close: read-only SSH `cat`/`hash` of `config.js`, `vpn-ui`,
-  `vpn-ui.html` on the NAS and compare to disk.* **(unknown until checked)**
+  `vpn-ui.html` on the NAS and compare to disk.* **→ Partially closed 2026-06-06:** a full live
+  read-only inventory of the NAS deploy dir was performed during the prune (§7); the live tree matched
+  expectations (and the doc-copy hashes were compared three ways before deletion).
 - Whether the desktop's "Restart UI" feature was ever *intended* for the NAS or was a local-only
   convenience is **unknown** (no commit message / note exists — it was never committed).
 
 ---
 
-## 6. Proposed reconciliation — NOT executed (for your approval later)
+## 6. Proposed reconciliation — ✅ EXECUTED 2026-06-06
 
-Goal restated by you: *preserve now, decide later.* Preservation is done (backup + this record).
-When you choose to reconcile git to reality, the low-risk path:
+> **Status update:** what was proposed below was carried out. Items 1 & 3 happened as the
+> git reconciliation (local committed as source of truth, then `origin/master` merged in — docs
+> quarantined into `documentation/this-is-my-mess/`, media-stack staged). Item 2 (NAS leftover
+> removal) was executed as the prune in **§7**. Item 4 (`laptop-experiment`) remains parked.
+
+The original low-risk path (kept for the record):
 
 1. **Capture the live code on a branch off the current desktop tree** (which == NAS + the newer UI):
    `git switch -c nas-truth` → stage the working tree (the modifications, the deletions, and the
@@ -123,3 +128,48 @@ When you choose to reconcile git to reality, the low-risk path:
    server filtering as a *future* change, reconciled to the NAS deliberately.
 
 **The NAS is never modified by any of the above.** All of it is local git history only.
+
+---
+
+## 7. NAS prune — EXECUTED 2026-06-06
+
+Carried out live after the NAS returned from a system update, step-by-step, with a full backup as a
+hard gate. Scope was **broadened per the user**: no docs/`.md` belong on the NAS — keep only what
+deploys, runs, and serves the report.
+
+**Backup (taken before any deletion):** `sudo tar` of the *entire* deploy dir incl. `data/` →
+`/volume1/Docker/vpn-speed-tester-backup-20260606.tar.gz` (9.6 MB, 4053 entries), verified and pulled
+to the desktop as a repo sibling (`../vpn-speed-tester-backup-20260606.tar.gz`, gzip-checked, 4053
+entries). Fully recoverable.
+
+**Removed** (explicit-path `rm` — no globs, no `--delete`, no rsync):
+- Root scripts (`deploy.sh`, `deployAndTestOne.sh`, `export-summary.sh`, `removed-deploy-test.sh`,
+  `sync-local.sh`, `test-manual.sh`, `view-data.sh`, `view-report.sh`) + root `package-lock.json`.
+- `orchestrator/runner.js`, `orchestrator/infiniteRunner.js`.
+- **All Markdown/docs:** `CLAUDE.md`, `README.md`, `VIEWING_REPORTS.md`, and the whole `documentation/`
+  tree (the three top-level historical docs *and* their `verified-completed-historical-only/` copies).
+  (Hash check first: only `fix-queue-and-startup-logic.md` matched byte-for-byte; the other two
+  top-level copies were stale older drafts whose current versions live in the subfolder + git — all
+  captured in the backup regardless.)
+- Cruft: `.claude/` (harness config), root `report/` (passenger copy; the *served* report is
+  `data/report/`), and placeholder `logs/` + `snapshots/` (each only an empty `ignorethis.md`).
+- gluetun artifacts: `gluetun/` (May-14 `auth.toml`) and `gluetun-test/` (May-7 leftover) — neither
+  mounted by `docker-compose.yml`.
+
+**Kept (verified present after):** `data/` (results, served `data/report/`, `data/logs/` [26],
+`data/snapshots/` [604]); **`gluetun-speedtest/`** — the live mount, `auth/` + the **Jun-2
+`servers.json`**, untouched; `orchestrator/` code incl. `rebuildResults.js`; `docker-compose.yml`;
+`.env`/`.env.example`/`.gitignore`; and the laptop tooling (`vpn`/`vpn-ui`/`vpn-ui.html`/`lib.sh`).
+
+**Stack unaffected:** file-level only. `docker ps -a` afterward showed identical container state
+(`orchestrator` Up; `gluetun-speedtest`/`speedtest-runner` Exited-between-windows, normal) — the running
+system was not disturbed, exactly as expected with the baked image.
+
+**Deploy left untouched (deliberate).** Until the image-based deploy upgrade lands, the next
+`./vpn deploy` will re-push docs/cruft (the rsync still has no excludes). Accepted for now; the durable
+fix belongs to the deploy-upgrade plan — see [deployment-upgrade-options.md](../deployment-upgrade-options.md).
+
+**Bonus (same session):** live-tested `./vpn fetch` (the data pull folded out of `fetch-nas-data.sh`)
+and fixed a real bug — it used `bash -c`, but the NAS is busybox (no `bash`); switched to `sh -c`.
+`./vpn fetch` now pulls results/raw/server-data/accepted/unreachable + snapshots into
+`analysis/nas-data/` (609 files).
