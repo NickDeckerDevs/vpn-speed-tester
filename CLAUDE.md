@@ -65,9 +65,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Node.js orchestrator that runs nightly speed tests against AirVPN US WireGuard servers from a Synology NAS. It cycles a single `gluetun` container through each server, runs `speedtest-cli` from a sibling container sharing gluetun's network namespace, and writes results to JSON files served by an nginx report container.
+A Node.js orchestrator that runs nightly speed tests against AirVPN US WireGuard servers from an ASUSTOR AS5404T NAS running ADM 5.1.3. It cycles a single `gluetun` container through each server, runs `speedtest-cli` from a sibling container sharing gluetun's network namespace, and writes results to JSON files served by an nginx report container.
 
-Live target: Synology NAS at `sysop@10.1.10.254:8322`, files at `/volume1/Docker/vpn-speed-tester/`, HTML report at `http://10.1.10.254:9191`. There is **no local dev loop** — the orchestrator must run on the NAS because it talks to the local docker socket, the gluetun control API, and a LAN qBittorrent instance.
+Live target: ASUSTOR NAS at `sysop@10.1.10.254:8322`, files at `/volume1/Docker/vpn-speed-tester/`, HTML report at `http://10.1.10.254:9191`. There is **no local dev loop** — the orchestrator must run on the NAS because it talks to the local docker socket, the gluetun control API, and a LAN qBittorrent instance.
 
 ## Commands
 

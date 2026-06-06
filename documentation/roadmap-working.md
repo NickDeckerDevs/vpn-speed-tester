@@ -34,7 +34,8 @@ selection driven by the collected data.
 > ⚠️ **Do not run `deploy.sh` from the laptop** until the laptop is reset to match `origin/master`.
 > `deploy.sh` uses `rsync` **without `--delete`**, so deploying from a stale machine leaves orphan
 > files behind and can regress server-filtering — exactly how the desktop/laptop drift happened.
-> See [laptop-experiment-keepers.md](laptop-experiment-keepers.md).
+> See [laptop-experiment-keepers.md](laptop-experiment-keepers.md). The long-term fix for this whole
+> class of problem is tracked in [deployment-upgrade-options.md](deployment-upgrade-options.md).
 
 ---
 
@@ -53,6 +54,17 @@ Once local, dig in. Starting questions:
 - Best time of day to connect for lowest load?
 
 The existing report (`report/index.html`) already charts some of this.
+
+### Deployment & repo-structure upgrade
+The current deploy flow (`deploy.sh` = `rsync` **without `--delete`**, run from whichever machine,
+and **no git on the NAS code at all**) is the root cause of the drift documented in
+[`analysis/orchestrator-comparison.md`](../analysis/orchestrator-comparison.md). The leaning fix is
+to **build our own Docker image** (GHCR + GitHub Actions building `linux/amd64` + a Portainer
+redeploy webhook, reusing the Portainer already running on the ASUSTOR AS5404T), with pull-based git
+and `rsync --delete` kept as lower-effort fallbacks. Full menu, verified environment, and trade-offs
+in [deployment-upgrade-options.md](deployment-upgrade-options.md). **Sequenced after** the desktop
+reconciliation lands and the real NAS code is committed — we don't re-platform code we don't yet
+trust.
 
 ### The pivot — media-stack control panel (green-lit)
 Turn what this project learned into a single control panel for the whole media stack

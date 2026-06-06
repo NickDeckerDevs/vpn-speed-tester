@@ -206,5 +206,12 @@ the data collected in Pieces 4–5.
 
 ---
 
+> **Post-review addition (2026-06-06):** deployment-model upgrades (build-our-own-image vs
+> pull-based git vs rsync `--delete`) are catalogued in
+> [deployment-upgrade-options.md](deployment-upgrade-options.md). Living detail is tracked in
+> [roadmap-working.md](roadmap-working.md); this review remains a point-in-time snapshot.
+
+---
+
 *Status: nothing executed. Companion file: `roadmap-review.html` (interactive). Source plan:
 `~/.claude/plans/i-think-we-have-compressed-creek.md`.*
