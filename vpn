@@ -9,6 +9,8 @@
 # - created: single entrypoint that consolidates the old deploy.sh, test-manual.sh,
 #   and view-report.sh into one CLI (deploy/test/logs/servers/check/report/local/rebuild),
 #   sourcing shared NAS/SSH constants from lib.sh
+# - fetch subcommand — folds the standalone fetch-nas-data.sh into the CLI: read-only
+#   sudo-tar pull of NAS data into analysis/nas-data/ for offline analysis
 set -e
 set -o pipefail
 
@@ -33,6 +35,8 @@ Commands:
   local --sync        Sync data only, don't start server
   local --serve       Start server only, don't re-sync
   rebuild             Reconstruct results.json from raw-results.json + server-data.json
+  fetch               Pull NAS data into analysis/nas-data/ for offline analysis
+  fetch --with-logs   Also pull logs/ (large)
   help, -h            Show this message
 
 First time:
@@ -306,6 +310,44 @@ cmd_rebuild() {
   $SSH "$SUDO docker exec orchestrator node rebuildResults.js"
 }
 
+# ── fetch ─────────────────────────────────────────────────────────────────────
+# Read-only pull of collected speed-test DATA from the NAS into analysis/nas-data/
+# for offline analysis. Docker writes the data as root, so we read it via
+# `sudo tar` streamed over SSH. Never writes to / deploys to the NAS.
+cmd_fetch() {
+  require_id_nas
+  load_sudo_prefix
+  local with_logs=false
+  case "${1:-}" in
+    --with-logs) with_logs=true ;;
+    "") ;;
+    *) echo "Unknown fetch flag: $1"; echo "Usage: ./vpn fetch [--with-logs]"; exit 1 ;;
+  esac
+
+  local dest="$SCRIPT_DIR/analysis/nas-data"
+  local remote="$NAS_DIR/data"
+  local paths=(results.json raw-results.json server-data.json \
+               accepted-servers.json unreachable-servers.json snapshots)
+  [ "$with_logs" = true ] && paths+=(logs)
+
+  mkdir -p "$dest"
+  echo "Pulling NAS data → $dest"
+  [ "$with_logs" = true ] && echo "(including logs/ — large)"
+
+  # Which of the wanted paths actually exist on the NAS? (missing ones skipped)
+  local existing
+  existing=$($SSH "$SUDO bash -c $(printf '%q' "cd '$remote' && for p in ${paths[*]}; do [ -e \"\$p\" ] && echo \"\$p\"; done")" 2>/dev/null)
+  [ -z "$existing" ] && { echo "ERROR: no data files found at $remote"; exit 1; }
+  echo "Found:"; echo "$existing" | sed 's/^/  - /'
+
+  # shellcheck disable=SC2086
+  $SSH "$SUDO tar -C '$remote' -czf - $(echo $existing)" 2>/dev/null | tar -xzf - -C "$dest"
+
+  echo ""; echo "Done. Local copy:"
+  du -sh "$dest" 2>/dev/null | sed 's/^/  /'
+  echo "The live NAS stack was not modified (read-only pull)."
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 CMD="${1:-help}"
@@ -320,6 +362,7 @@ case "$CMD" in
   report)       cmd_report   "$@" ;;
   local)        cmd_local    "$@" ;;
   rebuild)      cmd_rebuild  "$@" ;;
+  fetch)        cmd_fetch    "$@" ;;
   help|-h|--help) usage ;;
   *)            echo "Unknown command: $CMD"; echo ""; usage; exit 1 ;;
 esac
