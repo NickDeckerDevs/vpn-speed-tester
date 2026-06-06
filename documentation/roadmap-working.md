@@ -43,19 +43,22 @@ selection driven by the collected data.
 
 ## 🔴 Active priorities (2026-06-06)
 
-1. **[PRIORITY] Caddy reverse-proxy is crash-looping.** The `caddy` container on the NAS is stuck
-   `Restarting`; it fails to start with:
-   `adapting config … parsing caddyfile tokens for 'email': wrong argument count … at /etc/caddy/Caddyfile:2`
-   — the global `email` option on line 2 has no argument (most likely `ACME_EMAIL` is unset/empty in the
-   stack env, so `email {$ACME_EMAIL}` collapses to bare `email`). **Not in this repo:** Caddy lives in the
-   separate `media-server-v4` Portainer stack (config in the `waitress` repo + on the NAS at
-   `/volume1/Docker/caddy/Caddyfile`); the fix belongs there. **Effect:** the named HTTPS URL
-   `https://vpn-report.waitress.nickdeckerdevs.com` is down until Caddy starts (the plain
-   `http://10.1.10.254:<port>` path is unaffected). What Caddy is and how it's wired to this project:
-   [2026-05-14-caddy-https-integration.md](2026-05-14-caddy-https-integration.md).
-   - *Verify while in there:* the report's published port — `report-server` currently publishes **:9192**,
-     while the docs and Caddy's `reverse_proxy` reference **:9191**. If the port moved, Caddy's backend
-     **and** the README/report docs need updating.
+1. **[RESOLVED 2026-06-06] Caddy reverse-proxy crash-loop.** The `caddy` container was stuck
+   `Restarting` on `parsing caddyfile tokens for 'email': wrong argument count … at /etc/caddy/Caddyfile:2`.
+   Root cause was deeper than first thought: **all three** Caddy env vars
+   (`CLOUDFLARE_API_TOKEN`, `BASE_DOMAIN`, `ACME_EMAIL`) are `${...}` interpolations in the compose file
+   but were **absent from Portainer's stored env**, so all three resolved empty — `email {$ACME_EMAIL}`
+   collapsed to bare `email`. (Hence "worked on first publish, broke on restart": the values were never
+   persisted.) **Fix:** the three vars were added to **Portainer's stored env** (durable — survives
+   redeploys) and the stack redeployed; `ACME_EMAIL=nickdeckerdevs@gmail.com`. Caddy now serves all routes
+   with a valid wildcard Let's Encrypt cert (`*.waitress.nickdeckerdevs.com`, valid → Aug 12 2026). Full
+   write-up, route table, and runbook: [caddy-reverse-proxy/](caddy-reverse-proxy/).
+   - *Note on the 9191/9192 question:* not a Caddy problem. `vpn-report → :9191` 502s **by design** — the
+     vpn-speed-tester stack is intentionally off. The `:9192` "Homelab status" page is an unrelated service.
+   - *Carried follow-ups (low priority):* (a) `zigbee2mqtt` route targets `:8080`, colliding with
+     qbittorrent — likely should be `:8888`; (b) Immich container is live but has **no Caddy route** yet
+     (repo `NickDeckerDevs/nas-photo-manager`); (c) optional friendly "service down" page for 502s /
+     unmatched subdomains. All tracked in [caddy-reverse-proxy/](caddy-reverse-proxy/).
 
 2. **Deployment upgrade — now unblocked.** The desktop/laptop reconciliation (the former blocker) has
    landed. Until the upgrade ships, the rsync deploy has no `--delete`/excludes, so the next `./vpn deploy`
