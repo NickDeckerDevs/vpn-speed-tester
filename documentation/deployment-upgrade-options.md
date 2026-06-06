@@ -47,6 +47,35 @@ Sources: [ASUSTOR — Using a NAS with Docker](https://www.asustor.com/solution/
 The fix in one sentence: **make a versioned artifact the source of truth, and make the NAS pull it
 rather than receive a file dump.**
 
+### Non-runtime cruft on the NAS (related symptom)
+
+The same "rsync without excludes" flow also pushes **non-runtime files** the stack never uses onto the
+NAS: every `.md` doc, `README.md`/`CLAUDE.md`, the whole `documentation/` + `analysis/` (incl. the
+~400 KB frozen `nas-snapshot/`) + `media-stack/` trees, the `.claude/` harness config, and placeholder
+`logs/`/`snapshots/` dirs. Harmless, but it bloats and confuses the deploy directory and makes it harder
+to see what actually runs.
+
+**How the upgrade fixes this for good:** Option 1 makes the **Dockerfile build context** decide what
+ships — docs and laptop tooling simply aren't in the image, and `data/` stays a volume. There's no
+exclude list to maintain and no way for stray files to ride along. (If we ever *stayed* on rsync, the
+stopgap would be `--delete` + an `--exclude` list for docs/`.claude`/`analysis`/`media-stack` — that's
+Option 3 territory, a symptom patch, not the destination.)
+
+**Interim manual hygiene (2026-06-06, current pass):** while still on the existing deploy, the live NAS
+deploy dir is being pruned **by hand, after a full backup**, to remove the accumulated non-runtime
+files — all `.md` docs, the superseded root scripts + root `package-lock.json`,
+`orchestrator/runner.js` + `orchestrator/infiniteRunner.js`, the `.claude/` config, and the passenger
+root `report/` (the *served* report is `data/report/`). **Kept:** all runtime/reporting code, `data/`,
+the laptop tooling (`vpn`/`vpn-ui`/`vpn-ui.html`/`lib.sh`), and **all `gluetun*/` dirs** —
+`gluetun-speedtest/` is the live mount; `gluetun/` (a May-14 `auth.toml` artifact) and `gluetun-test/`
+(a May-7 test leftover, neither mounted by `docker-compose.yml`) are **left in place pending
+verification**.
+
+> ⚠️ **The deploy mechanism itself is deliberately left untouched in this pass** (no `--delete`, no new
+> excludes, no `vpn` change). Consequence: until the image-based upgrade lands, the **next `./vpn deploy`
+> will re-push the docs/cruft** — that re-cluttering is expected and accepted for now. Eliminating it is
+> precisely what Option 1 buys, and is to be done in its own dedicated plan, not bolted onto a deploy today.
+
 ---
 
 ## Option 1 — Build our own Docker image ⭐ (recommended)
