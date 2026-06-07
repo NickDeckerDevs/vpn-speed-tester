@@ -11,6 +11,11 @@
 #   sourcing shared NAS/SSH constants from lib.sh
 # - fetch subcommand — folds the standalone fetch-nas-data.sh into the CLI: read-only
 #   sudo-tar pull of NAS data into analysis/nas-data/ for offline analysis
+#
+# 6/6/2026 - nick decker
+# ADDED
+# - advise subcommand — runs the load-aware switch advisor (orchestrator/adviseJob.js)
+#   once against live AirVPN status and prints a stay/switch recommendation; recommend-only
 set -e
 set -o pipefail
 
@@ -37,6 +42,8 @@ Commands:
   rebuild             Reconstruct results.json from raw-results.json + server-data.json
   fetch               Pull NAS data into analysis/nas-data/ for offline analysis
   fetch --with-logs   Also pull logs/ (large)
+  advise              Run the switch advisor once vs live AirVPN status (recommend-only)
+  advise --current X  Tell it which server you're on (else assumes none)
   help, -h            Show this message
 
 First time:
@@ -351,6 +358,14 @@ cmd_fetch() {
   echo "The live NAS stack was not modified (read-only pull)."
 }
 
+# ── advise ────────────────────────────────────────────────────────────────────
+# Run the load-aware switch advisor once against LIVE AirVPN status and print its
+# stay/switch recommendation. Recommend-only — never touches a container. Runs
+# locally (needs internet + analysis/server-model.json; no .env required).
+cmd_advise() {
+  node "$SCRIPT_DIR/orchestrator/adviseJob.js" "$@"
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 CMD="${1:-help}"
@@ -366,6 +381,7 @@ case "$CMD" in
   local)        cmd_local    "$@" ;;
   rebuild)      cmd_rebuild  "$@" ;;
   fetch)        cmd_fetch    "$@" ;;
+  advise)       cmd_advise   "$@" ;;
   help|-h|--help) usage ;;
   *)            echo "Unknown command: $CMD"; echo ""; usage; exit 1 ;;
 esac

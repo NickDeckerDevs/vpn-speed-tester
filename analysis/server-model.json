@@ -1,0 +1,431 @@
+{
+  "meta": {
+    "builtAt": "2026-06-07T01:15:36.261Z",
+    "totalServers": 31,
+    "candidateCount": 10,
+    "selection": {
+      "count": 10,
+      "maxPingMs": 90,
+      "minRuns": 12
+    },
+    "healthyLoadMax": 50,
+    "checkFraction": 0.75,
+    "jumpFraction": 0.5
+  },
+  "params": {
+    "minGainMbps": 75,
+    "minGainPct": 30
+  },
+  "candidates": [
+    {
+      "server": "Leo",
+      "city": "Dallas, Texas",
+      "runs": 36,
+      "medDownload": 333,
+      "medPing": 56,
+      "healthy": 349,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": 71,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 9,
+          "medDl": 363
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 15,
+          "medDl": 341
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 3,
+          "medDl": 286
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 9,
+          "medDl": 91
+        }
+      ]
+    },
+    {
+      "server": "Aladfar",
+      "city": "Miami",
+      "runs": 36,
+      "medDownload": 308,
+      "medPing": 21,
+      "healthy": 357,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": 71,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 420
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 6,
+          "medDl": 349
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 15,
+          "medDl": 312
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 12,
+          "medDl": 137
+        }
+      ]
+    },
+    {
+      "server": "Meleph",
+      "city": "Miami",
+      "runs": 39,
+      "medDownload": 301,
+      "medPing": 21,
+      "healthy": 453,
+      "anchored": true,
+      "checkAbove": 51,
+      "jumpAbove": 71,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 6,
+          "medDl": 438
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 6,
+          "medDl": 454
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 3,
+          "medDl": 318
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 24,
+          "medDl": 222
+        }
+      ]
+    },
+    {
+      "server": "Volans",
+      "city": "Dallas, Texas",
+      "runs": 36,
+      "medDownload": 283,
+      "medPing": 56,
+      "healthy": 303,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 354
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 12,
+          "medDl": 299
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 12,
+          "medDl": 274
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 9,
+          "medDl": 163
+        }
+      ]
+    },
+    {
+      "server": "Ascella",
+      "city": "Miami",
+      "runs": 36,
+      "medDownload": 271,
+      "medPing": 21,
+      "healthy": 322,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 6,
+          "medDl": 365
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 9,
+          "medDl": 322
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 3,
+          "medDl": 267
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 18,
+          "medDl": 227
+        }
+      ]
+    },
+    {
+      "server": "Scutum",
+      "city": "Dallas, Texas",
+      "runs": 33,
+      "medDownload": 269,
+      "medPing": 58,
+      "healthy": 247,
+      "anchored": true,
+      "checkAbove": null,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 0,
+          "medDl": null
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 6,
+          "medDl": 247
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 9,
+          "medDl": 287
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 18,
+          "medDl": 223
+        }
+      ]
+    },
+    {
+      "server": "Polis",
+      "city": "Raleigh, North Carolina",
+      "runs": 39,
+      "medDownload": 267,
+      "medPing": 57,
+      "healthy": 312,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 318
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 15,
+          "medDl": 312
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 12,
+          "medDl": 270
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 9,
+          "medDl": 202
+        }
+      ]
+    },
+    {
+      "server": "Giausar",
+      "city": "Miami",
+      "runs": 39,
+      "medDownload": 243,
+      "medPing": 24,
+      "healthy": 308,
+      "anchored": true,
+      "checkAbove": 31,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 441
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 3,
+          "medDl": 182
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 9,
+          "medDl": 267
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 24,
+          "medDl": 232
+        }
+      ]
+    },
+    {
+      "server": "Helvetios",
+      "city": "Dallas, Texas",
+      "runs": 36,
+      "medDownload": 226,
+      "medPing": 57,
+      "healthy": 222,
+      "anchored": true,
+      "checkAbove": 71,
+      "jumpAbove": null,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 465
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 6,
+          "medDl": 207
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 18,
+          "medDl": 271
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 9,
+          "medDl": 159
+        }
+      ]
+    },
+    {
+      "server": "Chertan",
+      "city": "Miami",
+      "runs": 32,
+      "medDownload": 223,
+      "medPing": 22,
+      "healthy": 336,
+      "anchored": true,
+      "checkAbove": 51,
+      "jumpAbove": 71,
+      "curve": [
+        {
+          "lo": 0,
+          "hi": 30,
+          "mid": 15,
+          "n": 3,
+          "medDl": 445
+        },
+        {
+          "lo": 31,
+          "hi": 50,
+          "mid": 40.5,
+          "n": 9,
+          "medDl": 316
+        },
+        {
+          "lo": 51,
+          "hi": 70,
+          "mid": 60.5,
+          "n": 14,
+          "medDl": 197
+        },
+        {
+          "lo": 71,
+          "hi": 100,
+          "mid": 85.5,
+          "n": 6,
+          "medDl": 108
+        }
+      ]
+    }
+  ]
+}
