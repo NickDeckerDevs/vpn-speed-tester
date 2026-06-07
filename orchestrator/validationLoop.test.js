@@ -208,5 +208,24 @@ function mock(speeds, { throwEvery = 0 } = {}) {
     });
   })();
 
+  await (async function () {
+    // Clock advances only inside the mocked switch/speedtest, so timing is deterministic.
+    let t = 0, cur = null;
+    const clock = () => t;
+    const switchServer = async name => { t += 5000; cur = name; };          // each switch = 5s
+    const runSpeedtest = async () => { t += 30000; return { download: ({ Cur: 200, Alt: 300 }[cur] ?? 0) * 1e6 }; }; // each test = 30s
+    const out = await runValidationOnce({
+      model: MODEL, currentServer: 'Cur', fetchStatus: async () => liveStatus({ Cur: 80, Alt: 20 }),
+      switchServer, runSpeedtest, runsPerServer: 2, now: () => 'T', clock,
+    });
+    test('runValidationOnce: records per-run timing (total + per-server switch/run)', () => {
+      // current: switch 5s + 2x30s ; alt: switch 5s + 2x30s = 130s total
+      assert.strictEqual(out.record.timing.durationMs, 130000);
+      assert.strictEqual(out.record.timing.current.switchMs, 5000);
+      assert.deepStrictEqual(out.record.timing.current.runMs, [30000, 30000]);
+      assert.strictEqual(out.record.timing.alternative.switchMs, 5000);
+    });
+  })();
+
   console.log(`\n${passed} tests passed`);
 })();

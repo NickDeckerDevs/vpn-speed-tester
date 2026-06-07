@@ -14,6 +14,7 @@
  * 2026-06-06  created — P2-1: pure validation-record scoring (predicted vs measured)
  * 2026-06-06  P2-2: notional current-server carry-forward + tolerant state persistence
  * 2026-06-06  P2-3: runValidationOnce orchestration (dependency-injected; Docker-free here)
+ * 2026-06-06  P2-6: per-run timing (total durationMs + per-server switch/run times)
  */
 
 const fs = require('fs');
@@ -117,18 +118,24 @@ function saveState(statePath, state) {
  * Mbps. Tolerant: a failed individual run is skipped (fewer samples), not fatal.
  * `switchServer` and `runSpeedtest` are injected (the real ones need Docker).
  */
-async function measureServer(name, { switchServer, runSpeedtest }, n) {
+async function measureServer(name, { switchServer, runSpeedtest, clock = () => Date.now() }, n) {
+  const t0 = clock();
   await switchServer(name);
+  const switchMs = clock() - t0;
+
   const runs = [];
+  const runMs = [];
   for (let i = 0; i < n; i++) {
+    const r0 = clock();
     try {
       const data = await runSpeedtest();
       if (data && typeof data.download === 'number') runs.push(data.download / 1e6);
     } catch {
       /* skip this run, keep going */
     }
+    runMs.push(clock() - r0);
   }
-  return runs;
+  return { runs, switchMs, runMs };
 }
 
 /**
@@ -144,8 +151,11 @@ async function measureServer(name, { switchServer, runSpeedtest }, n) {
 async function runValidationOnce(deps) {
   const {
     model, currentServer, fetchStatus, switchServer, runSpeedtest,
-    runsPerServer = 2, now = () => new Date().toISOString(), log = () => {},
+    runsPerServer = 2, now = () => new Date().toISOString(), clock = () => Date.now(), log = () => {},
   } = deps;
+
+  const startedAt = now();
+  const startMs = clock();
 
   let status = [];
   try {
@@ -155,22 +165,38 @@ async function runValidationOnce(deps) {
   }
 
   const decision = recommend(currentServer, status, model);
-  const sdeps = { switchServer, runSpeedtest };
+  const sdeps = { switchServer, runSpeedtest, clock };
 
   let currentMeasured = [];
   let altMeasured = [];
+  let currentTiming = null;
+  let altTiming = null;
 
   // Only test servers we can actually reach (we have live status for the fleet).
   if (decision.from && status.length > 0) {
-    try { currentMeasured = await measureServer(decision.from, sdeps, runsPerServer); }
-    catch (err) { log(`measuring current ${decision.from} failed: ${err.message}`); }
+    try {
+      const m = await measureServer(decision.from, sdeps, runsPerServer);
+      currentMeasured = m.runs;
+      currentTiming = { switchMs: m.switchMs, runMs: m.runMs };
+    } catch (err) { log(`measuring current ${decision.from} failed: ${err.message}`); }
   }
   if (decision.bestAlternative) {
-    try { altMeasured = await measureServer(decision.bestAlternative.server, sdeps, runsPerServer); }
-    catch (err) { log(`measuring alt ${decision.bestAlternative.server} failed: ${err.message}`); }
+    try {
+      const m = await measureServer(decision.bestAlternative.server, sdeps, runsPerServer);
+      altMeasured = m.runs;
+      altTiming = { switchMs: m.switchMs, runMs: m.runMs };
+    } catch (err) { log(`measuring alt ${decision.bestAlternative.server} failed: ${err.message}`); }
   }
 
-  const record = buildValidationRecord({ at: now(), decision, currentMeasured, altMeasured });
+  const finishedAt = now();
+  const record = buildValidationRecord({ at: finishedAt, decision, currentMeasured, altMeasured });
+  record.timing = {
+    startedAt,
+    finishedAt,
+    durationMs: clock() - startMs,
+    current: currentTiming,
+    alternative: altTiming,
+  };
   return { decision, record, next: nextCurrent(decision) };
 }
 

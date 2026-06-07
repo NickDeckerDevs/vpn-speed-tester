@@ -53,8 +53,12 @@ async function waitHealthy(container, timeoutS) {
 }
 
 async function switchServer(name) {
-  log(`switching tunnel → ${name} (recreating gluetun + runner)`);
-  await sh(`docker compose -f "${COMPOSE}" up -d --force-recreate gluetun-speedtest speedtest-runner`, { SERVER_NAMES: name });
+  log(`switching tunnel → ${name} (clean down + up)`);
+  // Clean recreate, not --force-recreate: speedtest-runner shares gluetun's netns,
+  // and force-recreate leaves hash-prefixed orphans that eventually name-conflict.
+  // down --remove-orphans + up gives a conflict-proof fresh pair every switch.
+  await sh(`docker compose -f "${COMPOSE}" down --remove-orphans`);
+  await sh(`docker compose -f "${COMPOSE}" up -d`, { SERVER_NAMES: name });
   await waitHealthy('gluetun-speedtest', 180);
   log(`tunnel up on ${name}`);
 }
@@ -101,6 +105,10 @@ async function main() {
   console.log(`current  : ${c.server} @ ${c.load}%  predicted ${c.predicted} / measured ${c.measured} Mbps`);
   if (a) console.log(`alt      : ${a.server} @ ${a.load}%  predicted ${a.predicted} / measured ${a.measured} Mbps`);
   console.log(`scoring  : measuredGap ${record.scoring.measuredGap} Mbps, decisionCorrect=${record.scoring.decisionCorrect}`);
+  const t = record.timing;
+  const fmt = ms => `${(ms / 1000).toFixed(0)}s`;
+  const phase = p => (p ? `switch ${fmt(p.switchMs)} + tests ${p.runMs.map(fmt).join('/')}` : 'n/a');
+  console.log(`timing   : total ${fmt(t.durationMs)}  | current[${phase(t.current)}]  alt[${phase(t.alternative)}]`);
   console.log(`next run treats current = ${next}`);
   console.log(`logged → ${path.relative(ROOT, LOG_PATH)}`);
 }
