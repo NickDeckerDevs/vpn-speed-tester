@@ -55,6 +55,28 @@ test('expectedBandwidth: no populated bands falls back to overall median', () =>
   assert.strictEqual(expectedBandwidth(none, 50), 300);
 });
 
+// --- expectedBandwidth: hour-aware (v2) ------------------------------------
+const hourEntry = {
+  medDownload: 300,
+  curve: fullCurve, // load-only: 400 @ load 15
+  hourly: {
+    13: [band(0, 30, 5, 500), band(31, 50, 5, 480), band(51, 70, 0, null), band(71, 100, 0, null)],
+  },
+};
+test('expectedBandwidth: uses the per-hour curve when that hour is populated', () => {
+  assert.strictEqual(expectedBandwidth(hourEntry, 15, 13), 500); // hour 13 cell, not the load-only 400
+});
+test('expectedBandwidth: falls back to load-only curve when the hour is absent', () => {
+  assert.strictEqual(expectedBandwidth(hourEntry, 15, 2), 400);  // no hour-2 data -> load-only
+});
+test('expectedBandwidth: falls back when the hour exists but that load band is empty', () => {
+  // hour 13 has no 71-100 cell -> use the load-only curve (same as omitting the hour)
+  assert.strictEqual(expectedBandwidth(hourEntry, 85, 13), expectedBandwidth(hourEntry, 85));
+});
+test('expectedBandwidth: omitting hour keeps the original load-only behavior', () => {
+  assert.strictEqual(expectedBandwidth(hourEntry, 15), 400);
+});
+
 // --- recommend() ----------------------------------------------------------
 // A candidate whose expected speed is a CONSTANT (single-band curve), so each
 // test controls zone (via cut-points + live load) and expected speed separately.

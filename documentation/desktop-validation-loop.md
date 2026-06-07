@@ -64,6 +64,25 @@ Tunables (compose `orchestrator.environment`): `VALIDATION_RUNS_PER_SERVER` (def
 After a reboot, ensure Colima is up (`colima start`, or `brew services start colima`); the
 `restart: unless-stopped` orchestrator resumes on its own once Docker is back.
 
+## Reviewing a desktop-calibrated model
+
+The loop's canonical data lets us build a **desktop-calibrated** cheat sheet (the NAS-built
+`server-model.json` is biased for this vantage) and review it **without touching the live loop**:
+
+```sh
+# build the desktop model artifact (separate file; live server-model.json untouched)
+node analysis/buildModel.js --data desktop-validation/data --out analysis/server-model.desktop.json --all
+./vpn model-report     # bias (desktop vs NAS) · hour×load coverage · counterfactual decision replay
+```
+
+`buildModel` also computes a sparse **hour-of-day** curve per server (used by the hour-aware
+`expectedBandwidth(entry, load, hour)`, which falls back to the load-only curve when a cell is empty).
+`./vpn model-report` builds the desktop model in-memory and prints: per-server desktop-vs-NAS
+prediction deltas; an hour×load **coverage map** (data-collection progress); and a **counterfactual
+replay** — re-running each recorded decision under each model, scored against the speeds actually
+measured ("does recalibration decide better?"). **Review-only:** the live loop keeps running on the
+current model + fixed top-10 rotation. Promotion to live is a separate, deliberate step.
+
 ## Reading the results
 
 `desktop-validation/data/validation-log.jsonl` — one JSON record per pass:

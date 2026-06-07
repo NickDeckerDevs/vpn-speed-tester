@@ -6,12 +6,13 @@
  * 2026-06-06  created — Step 1 tests: median, toMbps, joinRunsToLoad
  * 2026-06-06  Step 2 tests: bucketMedians, deriveCutPoints
  * 2026-06-06  Step 3 tests: buildCandidates, buildModelObject
+ * 2026-06-07  v2 tests: hour parsing, hourlyCurve, review build
  */
 
 const assert = require('node:assert');
 const {
   median, toMbps, joinRunsToLoad,
-  bucketMedians, deriveCutPoints,
+  bucketMedians, hourlyCurve, deriveCutPoints,
   buildCandidates, buildModelObject,
 } = require('./buildModel');
 
@@ -197,6 +198,42 @@ test('buildModelObject: wraps candidates with meta + advisor params, passing bui
   assert.strictEqual(m.candidates.length, 2);
   assert.strictEqual(m.params.minGainMbps, 75);
   assert.strictEqual(m.params.minGainPct, 30);
+});
+
+// --- v2: hour-of-day -------------------------------------------------------
+const sdHour = {
+  '20260607131500': { public_name: 'Meleph', currentload: 40, location: 'Miami' }, // hour 13
+  '20260607240500': { public_name: 'Meleph', currentload: 40, location: 'Miami' }, // hour "24" -> 0
+};
+test('joinRunsToLoad: parses EST hour-of-day onto each point', () => {
+  const raw = { '20260607131500_1-2': { download: 300_000_000, ping: 21 } };
+  assert.strictEqual(joinRunsToLoad(raw, sdHour).Meleph.points[0].hour, 13);
+});
+test('joinRunsToLoad: legacy midnight hour "24" maps to 0', () => {
+  const raw = { '20260607240500_1-2': { download: 300_000_000, ping: 21 } };
+  assert.strictEqual(joinRunsToLoad(raw, sdHour).Meleph.points[0].hour, 0);
+});
+test('hourlyCurve: groups points by hour into band medians; sparse (only hours with data)', () => {
+  const points = [
+    { load: 20, dl: 400, ping: 21, hour: 13 },
+    { load: 20, dl: 420, ping: 21, hour: 13 },
+    { load: 80, dl: 150, ping: 21, hour: 2 },
+  ];
+  const hc = hourlyCurve(points);
+  assert.deepStrictEqual(Object.keys(hc).sort(), ['13', '2']); // only hours with data
+  assert.strictEqual(hc[13][0].medDl, 410);  // 0-30 band @ hour 13: median(400,420)
+  assert.strictEqual(hc[13][3].medDl, null);  // 71-100 band @ hour 13: empty
+  assert.strictEqual(hc[2][3].medDl, 150);   // 71-100 band @ hour 2
+});
+test('buildCandidates: review build (relaxed opts) keeps thin servers + adds hourly', () => {
+  const byServer = {
+    Thin: { city: 'Miami', points: [{ load: 20, dl: 300, ping: 21, hour: 13 }] }, // only 1 run
+  };
+  const strict = buildCandidates(byServer, { count: 10 }); // default minRuns 12
+  assert.strictEqual(strict.length, 0);                    // dropped (too few runs)
+  const review = buildCandidates(byServer, { count: 50, minRuns: 1 });
+  assert.strictEqual(review.length, 1);
+  assert.ok('hourly' in review[0] && '13' in review[0].hourly); // hour-of-day map present
 });
 
 console.log(`\n${passed} tests passed`);

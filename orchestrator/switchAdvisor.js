@@ -22,15 +22,18 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
  * its per-load-band curve. We never extrapolate past the observed range — below
  * the first sampled band we return its best, above the last we return its worst.
  *
- * entry: a candidate from server-model.json (has `curve` and `medDownload`).
+ * entry: a candidate from server-model.json (has `curve`, optional `hourly`, `medDownload`).
+ * If `hour` (0-23) is given AND the entry has a populated curve for that hour, the
+ * hour-specific curve is used; otherwise it falls back to the load-only `curve`
+ * (and finally `medDownload`). This keeps the sparse 24-hour map safe to consult.
  * Returns a number, or null if the entry has no usable data at all.
  */
-function expectedBandwidth(entry, liveLoad) {
-  const pts = (entry.curve || [])
+function interpolateCurve(buckets, liveLoad) {
+  const pts = (buckets || [])
     .filter(b => b.medDl != null && b.n > 0)
     .map(b => ({ x: b.mid, y: b.medDl }));
 
-  if (pts.length === 0) return entry.medDownload ?? null;
+  if (pts.length === 0) return null;
   if (pts.length === 1) return pts[0].y;
 
   const load = clamp(liveLoad, 0, 100);
@@ -44,6 +47,21 @@ function expectedBandwidth(entry, liveLoad) {
     }
   }
   return pts[pts.length - 1].y; // unreachable, but safe
+}
+
+function expectedBandwidth(entry, liveLoad, hour) {
+  // Hour-aware: use the per-hour curve only for the SPECIFIC load band the load
+  // falls in. If that (hour, band) cell is empty we fall back to the load-only
+  // curve rather than clamp across the hour's other bands (which would hide a
+  // known high-load cliff the load-only curve does capture).
+  if (hour != null && entry.hourly && entry.hourly[hour]) {
+    const load = clamp(liveLoad, 0, 100);
+    const cell = entry.hourly[hour].find(b => load >= b.lo && load <= b.hi);
+    if (cell && cell.medDl != null && cell.n > 0) return cell.medDl;
+  }
+  // Fall back to the load-only curve, then to the overall median.
+  const loadOnly = interpolateCurve(entry.curve, liveLoad);
+  return loadOnly != null ? loadOnly : (entry.medDownload ?? null);
 }
 
 const DEFAULT_PARAMS = { minGainMbps: 75, minGainPct: 30 };

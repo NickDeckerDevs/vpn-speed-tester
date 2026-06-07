@@ -45,6 +45,7 @@ Commands:
   advise              Run the switch advisor once vs live AirVPN status (recommend-only)
   advise --current X  Tell it which server you're on (else assumes none)
   dashboard           Read-only summary of the desktop validation loop's data
+  model-report        Review a desktop-calibrated model vs NAS (bias / coverage / replay)
   help, -h            Show this message
 
 First time:
@@ -374,6 +375,14 @@ cmd_dashboard() {
   node "$SCRIPT_DIR/analysis/validationReport.js" "$@"
 }
 
+# ── model-report ──────────────────────────────────────────────────────────────
+# Read-only review of a desktop-calibrated model vs the live NAS model: prediction
+# bias, hour×load coverage, and a counterfactual replay of recorded decisions.
+# Builds the desktop model in-memory; never touches the live server-model.json.
+cmd_modelreport() {
+  node "$SCRIPT_DIR/analysis/modelReport.js" "$@"
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 CMD="${1:-help}"
@@ -391,6 +400,7 @@ case "$CMD" in
   fetch)        cmd_fetch    "$@" ;;
   advise)       cmd_advise   "$@" ;;
   dashboard)    cmd_dashboard "$@" ;;
+  model-report) cmd_modelreport "$@" ;;
   help|-h|--help) usage ;;
   *)            echo "Unknown command: $CMD"; echo ""; usage; exit 1 ;;
 esac

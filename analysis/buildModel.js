@@ -9,13 +9,15 @@
  * Self-contained on purpose: no config.js (throws without QBT_* env) and no
  * logger.js (writes to /data/logs, absent off-NAS) so it runs + tests anywhere.
  *
- *   node analysis/buildModel.js          # regenerate analysis/server-model.json
- *   node analysis/buildModel.test.js     # run the unit tests
+ *   node analysis/buildModel.js                                  # NAS model -> server-model.json
+ *   node analysis/buildModel.js --data <dir> --out <path> --all  # e.g. desktop-calibrated model
+ *   node analysis/buildModel.test.js                             # run the unit tests
  *
  * Changelog
  * 2026-06-06  created — Step 1: join raw-results<->server-data + bits->Mbps + median
  * 2026-06-06  Step 2 — per-server load->speed curve (bucket medians) + cut-point derivation
  * 2026-06-06  Step 3 — candidate selection + assemble/write server-model.json
+ * 2026-06-07  v2 — hour-of-day curve (per server, sparse 0-23) + --data/--out/--all params
  */
 
 const fs = require('fs');
@@ -60,7 +62,8 @@ function toMbps(bitsPerSec) {
  * raw:        keyed by `${timestamp}_${run}-${total}` -> { download (bits/s), ping, ... }
  * serverData: keyed by `${timestamp}` -> { public_name, currentload, location, ... }
  *
- * Returns: { [serverName]: { city, points: [{ load, dl (Mbps), ping }] } }
+ * Returns: { [serverName]: { city, points: [{ load, dl (Mbps), ping, hour }] } }
+ * `hour` is the EST hour-of-day (0-23) parsed from the session timestamp.
  * Runs whose timestamp has no server-data entry, or whose download is not a
  * finite number >= 0, are skipped.
  */
@@ -77,9 +80,13 @@ function joinRunsToLoad(raw, serverData) {
     if (typeof rawDl !== 'number' || !Number.isFinite(rawDl) || rawDl < 0) continue;
     const dl = toMbps(rawDl);
 
+    // EST hour-of-day from the YYYYMMDDHHMMSS session id. The legacy clock encodes
+    // midnight as hour "24" (see CLAUDE.md conventions) — map it to 0.
+    const hour = (parseInt(timestamp.slice(8, 10), 10) || 0) % 24;
+
     const name = meta.public_name;
     if (!byServer[name]) byServer[name] = { city: meta.location, points: [] };
-    byServer[name].points.push({ load: meta.currentload, dl, ping: raw[key].ping });
+    byServer[name].points.push({ load: meta.currentload, dl, ping: raw[key].ping, hour });
   }
   return byServer;
 }
@@ -136,6 +143,23 @@ function deriveCutPoints(points) {
   };
 }
 
+/**
+ * Per-hour load->speed curve for one server (the hour-of-day map dimension).
+ * Returns: { [hour]: [{ lo, hi, mid, n, medDl }] } — only hours that have data
+ * are present (sparse). Each hour reuses the same load-band buckets. This is
+ * additive: the load-only `curve` stays the primary signal; the hour-aware
+ * advisor lookup falls back to it whenever an (hour, band) cell is empty.
+ */
+function hourlyCurve(points) {
+  const byHour = {};
+  for (let h = 0; h < 24; h++) {
+    const hp = points.filter(p => p.hour === h);
+    if (hp.length === 0) continue;
+    byHour[h] = bucketMedians(hp);
+  }
+  return byHour;
+}
+
 // Candidate-selection defaults. We keep the nearby, well-sampled, fast servers
 // and let the bad/far ones fall away on rank. Tunable as more data lands.
 const SELECTION = {
@@ -172,6 +196,12 @@ function buildCandidates(byServer, opts = {}) {
       checkAbove: cut.checkAbove,
       jumpAbove: cut.jumpAbove,
       curve: bucketMedians(points).map(b => ({ lo: b.lo, hi: b.hi, mid: b.mid, n: b.n, medDl: round(b.medDl) })),
+      hourly: Object.fromEntries(
+        Object.entries(hourlyCurve(points)).map(([h, buckets]) => [
+          h,
+          buckets.map(b => ({ lo: b.lo, hi: b.hi, mid: b.mid, n: b.n, medDl: round(b.medDl) })),
+        ])
+      ),
     };
   });
 
@@ -199,19 +229,31 @@ function buildModelObject(byServer, builtAt, opts = {}) {
   };
 }
 
-const DATA_DIR = path.join(__dirname, 'nas-data');
-const MODEL_PATH = path.join(__dirname, 'server-model.json');
+const DEFAULT_DATA_DIR = path.join(__dirname, 'nas-data');
+const DEFAULT_MODEL_PATH = path.join(__dirname, 'server-model.json');
 
-/** Read the local data files, build the model, write server-model.json. */
+/** Parse `--data <dir>` / `--out <path>` (defaults: nas-data -> server-model.json). */
+function parseArgs(argv) {
+  const a = { data: DEFAULT_DATA_DIR, out: DEFAULT_MODEL_PATH, opts: {} };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--data') a.data = path.resolve(argv[++i]);
+    else if (argv[i] === '--out') a.out = path.resolve(argv[++i]);
+    else if (argv[i] === '--all') a.opts = { count: 50, minRuns: 1 }; // review build: include every sampled server
+  }
+  return a;
+}
+
+/** Read the data files, build the model, write it. */
 function main() {
-  const raw = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'raw-results.json'), 'utf8'));
-  const serverData = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'server-data.json'), 'utf8'));
+  const { data, out, opts } = parseArgs(process.argv.slice(2));
+  const raw = JSON.parse(fs.readFileSync(path.join(data, 'raw-results.json'), 'utf8'));
+  const serverData = JSON.parse(fs.readFileSync(path.join(data, 'server-data.json'), 'utf8'));
 
   const byServer = joinRunsToLoad(raw, serverData);
-  const model = buildModelObject(byServer, new Date().toISOString());
+  const model = buildModelObject(byServer, new Date().toISOString(), opts);
 
-  fs.writeFileSync(MODEL_PATH, JSON.stringify(model, null, 2) + '\n');
-  console.log(`Wrote ${path.relative(process.cwd(), MODEL_PATH)} — ${model.candidates.length} candidates from ${model.meta.totalServers} servers:`);
+  fs.writeFileSync(out, JSON.stringify(model, null, 2) + '\n');
+  console.log(`Wrote ${path.relative(process.cwd(), out)} — ${model.candidates.length} candidates from ${model.meta.totalServers} servers:`);
   for (const c of model.candidates) {
     const flag = c.anchored ? '' : ' (unanchored)';
     console.log(`  ${c.server.padEnd(12)} ${String(c.city).padEnd(22)} medDL ${String(c.medDownload).padStart(3)}  ping ${String(c.medPing).padStart(3)}  check@${c.checkAbove ?? '-'} jump@${c.jumpAbove ?? '-'}${flag}`);
@@ -227,6 +269,7 @@ module.exports = {
   CHECK_FRACTION,
   JUMP_FRACTION,
   bucketMedians,
+  hourlyCurve,
   deriveCutPoints,
   SELECTION,
   ADVISOR_PARAMS,
