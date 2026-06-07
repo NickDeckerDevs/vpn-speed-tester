@@ -2,7 +2,7 @@
 
 **Project:** AirVPN Speed Tester
 **Last Updated:** 2026-06-07
-**Status:** Phase 1 ✅ complete (data collected) · Phase 2 🔵 in progress (load-aware switch advisor + self-validation loop)
+**Status:** Phase 1 ✅ complete (data collected) · Phase 2 🔵 in progress (advisor ✅ + self-validation loop 🔵 + auto-switch "hands" ✅ on desktop)
 
 This is a living document. **Next decisions are at the top.** Update it when priorities shift.
 
@@ -29,11 +29,16 @@ Pick one of these to take into its own plan. Each notes what it's waiting on.
    *Waiting on:* the deploy upgrade (#3) **and** staggering vs the always-on desktop loop (shared home WAN —
    never speed-test on both at once).
 
-5. **The "hands"** — generalize `gluetunManager` from 1→N so it can tear down the 7 media-stack
-   containers, swap the server, and bring them back in order. The real automatic switcher. Logic is
-   data-independent to build; lands in the media-stack pivot. Design: [../media-stack/media-stack-manager-handoff.md](../media-stack/media-stack-manager-handoff.md).
+5. ~~**The "hands"**~~ **BUILT (desktop, 2026-06-07).** The media-stack VPN switch + the
+   brain→decider→hands auto-switch chain are implemented and proven on the desktop stand-in
+   (`./vpn media-switch`, `./vpn auto-switch`). It discovers riders dynamically (1→N, no hardcoded
+   list). Design + status: [../media-stack/vpn-switch.md](../media-stack/vpn-switch.md). *Remaining before
+   production:* (a) **set real guardrails** (`cooldownSec`/`maxSwitchesPerDay`) from accumulated
+   `switch-decisions.jsonl` data — shipped loose to measure; (b) the **live NAS stack cleanup**
+   ([../media-stack/stack-cleanup-checklist.md](../media-stack/stack-cleanup-checklist.md)) — move arr
+   apps off the VPN; (c) the deploy upgrade (#3) to ship it.
 
-6. **Housekeeping** — push/merge the `feat/switch-advisor` branch (Phase 2 work, ~75 tests, not yet on master).
+6. **Housekeeping** — push/merge the `feat/switch-advisor` branch (Phase 2 + auto-switch, ~110 tests, not yet on master).
 
 ---
 
@@ -58,7 +63,7 @@ blocker is long resolved.
   `server-data.json`) so `buildModel.js` + the report can consume the desktop data.
 - **Dashboard** — `./vpn dashboard` summarizes accuracy, per-server prediction bias, coverage, and the
   live load→speed curves. Full design: [desktop-validation-loop.md](desktop-validation-loop.md).
-- ~75 tests, branch `feat/switch-advisor`. The loop is **gathering balanced data now** (rotating all 10).
+- ~110 tests, branch `feat/switch-advisor`. The loop is **gathering balanced data now** (rotating all 10).
 
 ## Current standing decision
 
@@ -75,15 +80,19 @@ load→speed map (binding constraint is calendar coverage of day/night + weekday
 
 ## The arc to automatic switching
 
-The through-line connecting the chapters: **brain ✅ → validate (now) → map → hands.**
+The through-line connecting the chapters: **brain ✅ → validate (now) → map → hands ✅ → tune+ship.**
 
 - **Brain** (done) — the recommend-only advisor.
 - **Validate** (now) — the desktop loop scores the advisor against reality and gathers balanced data.
 - **Map** (next) — a desktop-calibrated load→speed table per server (ideally per hour-of-day). Once
   mapped, a production switch needs no live speedtest: cheap AirVPN load check → map lookup → decision.
-- **Hands** (later) — generalize `gluetunManager` 1→N and switch the real 7-service media stack; this is
-  the **media-stack control panel** pivot ([../media-stack/media-stack-manager-handoff.md](../media-stack/media-stack-manager-handoff.md)),
-  which supersedes the earlier standalone "automated production VPN switching" idea.
+- **Hands** (built, desktop) — `mediaSwitch.switchMediaServer` tears down + recreates gluetun and
+  re-pins exactly the riders that share its netns (1→N, discovered). The advisor is wired to it through
+  a policy-gated decider (`switchDecider` + `switchDeciderMain`, `./vpn auto-switch`). This is the
+  **media-stack control panel** pivot, superseding the earlier standalone "automated production VPN
+  switching" idea. Status: [../media-stack/vpn-switch.md](../media-stack/vpn-switch.md).
+- **Tune + ship** (next for the switcher) — set guardrails from logged `switch-decisions.jsonl`, run the
+  live NAS stack cleanup, then deploy. Gated by the deployment upgrade.
 
 Cross-cutting: the **deployment upgrade** (make deploys safe + image-based) underpins shipping any of
 this to the NAS/production.
@@ -97,7 +106,7 @@ Tracked but not committed. Revisit as data accumulates.
 | Idea | Notes |
 |------|-------|
 | **Smart scheduling** | Shift the test window to hours when target servers are historically low-load; predicted load curves per server per hour (overlaps with the "map" above). |
-| **Unit tests (legacy modules)** | `queueBuilder` priority, `aggregator` averages, `airvpnStatus` tiers. (The advisor/validation modules already have ~75 tests.) |
+| **Unit tests (legacy modules)** | `queueBuilder` priority, `aggregator` averages, `airvpnStatus` tiers. (The advisor/validation/auto-switch modules already have ~110 tests.) |
 | **Data retention** | Snapshots + validation logs accumulate indefinitely. Define a max age (~90 days) + cleanup. |
 | **Error alerting** | Notify (Home Assistant / Mosquitto / Pushover) if a whole test window or the validation loop fails. |
 | **Jitter/ping views** | Latency/jitter collected but underrepresented in the report. |

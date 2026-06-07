@@ -1,0 +1,109 @@
+# docker-compose.mediaswitch.desktop.yml — desktop STAND-IN stack for the media VPN switch.
+#
+# Mirrors the real media stack's SHAPE without its weight: a gluetun tunnel + a few
+# placeholder "rider" containers (busybox, distinct names) that share gluetun's netns,
+# plus a media-orchestrator that runs mediaSwitchMain.js to perform the switch.
+#
+# It exercises the SAME machinery as production (gluetunManager primitives + mediaSwitch),
+# but never touches the real NAS. Driven manually:  ./vpn media-switch <SERVER_NAME>
+#
+# WIREGUARD_* come from .env (real AirVPN creds — gluetun must bring a real tunnel up so
+# waitForTunnel can confirm it). qBittorrent is skipped (MEDIA_SWITCH_SKIP_QBT) since the
+# riders are placeholders. The placeholders stand in for qbittorrent/prowlarr/byparr.
+#
+# Changelog
+# 2026-06-07  created — Phase 2 of the media-stack VPN switch plan
+
+services:
+
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.1
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=United States
+      - SERVER_NAMES=${SERVER_NAMES:-Aladfar}
+      - DNS_SERVERS=1.1.1.1,8.8.8.8
+      - DNS_IPV6=false
+      - TZ=America/New_York
+    volumes:
+      - ./desktop-mediaswitch/gluetun:/gluetun
+    healthcheck:
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ── placeholder riders (stand in for qbittorrent / prowlarr / byparr) ──
+  # network_mode service:gluetun → they ride gluetun's netns, so a switch must
+  # discover + restart exactly these. busybox keeps them weightless.
+  ms-qbittorrent:
+    image: busybox:1.36
+    container_name: ms-qbittorrent
+    network_mode: "service:gluetun"
+    command: sleep infinity
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+  ms-prowlarr:
+    image: busybox:1.36
+    container_name: ms-prowlarr
+    network_mode: "service:gluetun"
+    command: sleep infinity
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+  ms-byparr:
+    image: busybox:1.36
+    container_name: ms-byparr
+    network_mode: "service:gluetun"
+    command: sleep infinity
+    depends_on:
+      - gluetun
+    restart: unless-stopped
+
+  # An "independent" container to prove the switch leaves non-riders alone.
+  ms-jellyfin:
+    image: busybox:1.36
+    container_name: ms-jellyfin
+    command: sleep infinity
+    restart: unless-stopped
+
+  media-orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: media-orchestrator
+    command: sleep infinity        # idle; `./vpn media-switch <server>` execs mediaSwitchMain.js
+    entrypoint: []
+    environment:
+      - TZ=America/New_York
+      - GLUETUN_CONTAINER=gluetun
+      - GLUETUN_CONTROL_URL=http://gluetun:8000/v1/vpn/status
+      - MEDIA_SWITCH_SKIP_QBT=true
+      - MODEL_PATH=/config/server-model.json
+      - POLICY_PATH=/config/switch-policy.json
+      # Dummy values so config.js (which validates these at require-time) loads.
+      # qBittorrent is skipped on the stand-in, so they are never used.
+      - QBT_BASE_URL=http://localhost:8080
+      - QBT_PASSWORD=unused
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The advisor's learned cheat sheet + the operational policy (auto-switch).
+      - ./analysis/server-model.json:/config/server-model.json:ro
+      - ./media-stack/switch-policy.json:/config/switch-policy.json:ro
+      # Persist switch-state.json + switch-decisions.jsonl (the guardrail-tuning data).
+      - ./desktop-mediaswitch/data:/data
+    depends_on:
+      - gluetun

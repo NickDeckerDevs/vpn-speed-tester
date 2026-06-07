@@ -133,10 +133,14 @@ Inside the orchestrator container (rarely needed directly — `docker exec orche
 - `npm run test:single` — `node main.js --manual`, runs one speed-test window immediately and exits.
 - `npm run test:infinite` — `node main.js --infinite`, loops servers continuously (resets coverage when all tiers are filled).
 
-No linter is configured. The legacy NAS modules have no tests, but the Phase-2 advisor/validation
-modules do: plain `node:assert` files run directly (`node orchestrator/switchAdvisor.test.js`,
+No linter is configured. The legacy NAS modules have no tests, but the Phase-2 advisor/validation/
+auto-switch modules do: plain `node:assert` files run directly (`node orchestrator/switchAdvisor.test.js`,
+`orchestrator/mediaSwitch.test.js`, `orchestrator/switchDecider.test.js`, `orchestrator/switchState.test.js`,
 `orchestrator/validationLoop.test.js`, `analysis/buildModel.test.js`, `analysis/validationReport.test.js`
-— ~75 tests). `orchestrator/test-qbt-pause.js` is a one-off probe script, not a test suite.
+— ~110 tests). The auto-switch runner glue (`switchDeciderMain.js`: cron, AirVPN fetch, Docker inspect)
+has no unit test — its only pure logic (daily-count day-reset) is extracted to `switchState.js` and
+tested there; the rest is verified by the desktop stand-in (`./vpn auto-switch`).
+`orchestrator/test-qbt-pause.js` is a one-off probe script, not a test suite.
 
 ## Architecture
 
@@ -181,6 +185,8 @@ Also registered: `cron.schedule('30 * * * *', writeHourlySnapshot)` ([snapshotWr
 A load-aware **switch advisor** decides stay-vs-switch for the media-stack VPN, recommend-only:
 - [orchestrator/switchAdvisor.js](orchestrator/switchAdvisor.js) — pure `expectedBandwidth()` + `recommend()` (three zones: stay / check-for-better / must-jump; fail-safe to stay). Consumes the "cheat sheet" [analysis/server-model.json](analysis/server-model.json), built by [analysis/buildModel.js](analysis/buildModel.js) from `analysis/nas-data/`.
 - [orchestrator/adviseJob.js](orchestrator/adviseJob.js) — the `./vpn advise` runner (Node `fetch`; no config/.env dependency).
+
+The advisor is wired to *act* via a **brain→decider→hands** chain (`./vpn auto-switch` runs one tick on the desktop stand-in): `switchAdvisor.recommend()` (brain) → [orchestrator/switchDecider.js](orchestrator/switchDecider.js) `decide()` (NEW, pure — gates the recommendation through the operational policy [media-stack/switch-policy.json](media-stack/switch-policy.json): `enabled`/`dryRun`/`cooldownSec`/`maxSwitchesPerDay`) → `mediaSwitch.switchMediaServer()` (hands). The runner [orchestrator/switchDeciderMain.js](orchestrator/switchDeciderMain.js) ticks on `policy.cron`, reads the policy fresh each tick, takes the current server live from gluetun's `SERVER_NAMES` env, and logs every tick to `/data/switch-decisions.jsonl`. **Policy lives in its own file, NOT `server-model.json`, because `buildModel.js` regenerates the model** and would erase hand-edited operational knobs. The shipped policy is intentionally loose (no cap, short cooldown) to *measure* behavior; real guardrails get set from the logged data before go-live (see [media-stack/vpn-switch.md](media-stack/vpn-switch.md) "Guardrails (TODO before go-live)").
 
 A continuous **self-validation loop** grades the advisor against real speed tests, on a **Colima desktop runtime** (not the NAS): [docker-compose.desktop.yml](docker-compose.desktop.yml) runs an `orchestrator` container executing [orchestrator/validationMain.js](orchestrator/validationMain.js), which **reuses** `gluetunManager.switchServer`/`waitForTunnel` + `speedTester.runSpeedtest`. Pure loop logic + scoring + top-10 coverage rotation live in [orchestrator/validationLoop.js](orchestrator/validationLoop.js); [orchestrator/estTime.js](orchestrator/estTime.js) is the shared EST-timestamp helper (also used by scheduler.js). Each pass writes the decision log (`validation-log.jsonl`) **and** canonical `raw-results.json`/`server-data.json` into the desktop `/data`, so `buildModel.js` + the report can consume the desktop measurements. `./vpn dashboard` ([analysis/validationReport.js](analysis/validationReport.js)) summarizes it. Full design: [documentation/desktop-validation-loop.md](documentation/desktop-validation-loop.md). `config.js` `GLUETUN_CONTROL_URL`/`GLUETUN_SERVERS_URL`/container names are env-overridable for this local-vs-NAS reuse.
 

@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "dryRun": false,
+  "cron": "*/15 * * * *",
+  "cooldownSec": 60,
+  "maxSwitchesPerDay": null,
+  "_note": "TESTING DEFAULTS — intentionally loose to OBSERVE switch behavior, not throttle it. cooldownSec is short and maxSwitchesPerDay is null (unlimited). BEFORE GO-LIVE: set real guardrails derived from the switch-decisions.jsonl data these runs generate (how often does it actually want to switch? how much does each switch cost a download?). See media-stack/vpn-switch.md 'Guardrails (TODO before go-live)'. This file is hand-edited and pushed as-is; buildModel.js does NOT touch it (unlike analysis/server-model.json)."
+}

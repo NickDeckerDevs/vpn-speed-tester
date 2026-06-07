@@ -338,4 +338,11 @@ async function restoreBaseContainers() {
   }
 }
 
-module.exports = { switchServer, waitForTunnel, tearDownTestContainers, restoreBaseContainers, ensureSpeedtestRunner, captureBaseConfig, getAcceptedServers };
+module.exports = {
+  switchServer, waitForTunnel, tearDownTestContainers, restoreBaseContainers,
+  ensureSpeedtestRunner, captureBaseConfig, getAcceptedServers,
+  // Lower-level primitives reused by mediaSwitchMain.js (the media-stack VPN switch),
+  // which discovers+recreates an arbitrary set of riders rather than the fixed
+  // speedtest-runner that switchServer() hardcodes.
+  tearDown, getEnv, startGluetunTunnel,
+};

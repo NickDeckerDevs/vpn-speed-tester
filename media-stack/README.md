@@ -16,4 +16,8 @@ are not wired into this repo's `docker-compose.yml`.
 | File | What it is |
 |------|------------|
 | `media-stack-manager-handoff.md` | Design/handoff for a unified control panel over the media stack (qBittorrent, Radarr, Sonarr, Lidarr, Prowlarr, byparr, speedtest-tracker) behind a shared gluetun. Notes which speed-tester modules are reusable. **Not yet built.** |
-| `2026-06-01_media-server.yaml` | Draft docker-compose for that media stack (caddy + gluetun + the media services). A template for the next project — **not** the speed-tester's compose file. |
+| `2026-06-01_media-server.yaml` | Draft docker-compose for that media stack (caddy + gluetun + the media services). A template for the next project — **not** the speed-tester's compose file. The "before" snapshot for the stack cleanup. |
+| `hands-review.md` | Plain-English review of what a VPN switch takes down and which apps truly need the VPN. The analysis behind the switch + cleanup plan. |
+| `vpn-switch.md` | **The VPN switch ("the hands") — start here.** Next steps, the switch sequence, encoded hazards, and the reuse map. The switch itself lives in `orchestrator/mediaSwitch.js` + `mediaSwitchMain.js`. |
+| `target-media-server.yaml` | The cleaned-up media compose ("after"): speedtest-tracker dropped, radarr/sonarr/lidarr moved off the VPN. Design artifact — **not yet deployed**. |
+| `stack-cleanup-checklist.md` | Deferred cutover runbook for the real NAS to go from the "before" to the "after" compose. |
