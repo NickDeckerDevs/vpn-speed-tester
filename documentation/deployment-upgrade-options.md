@@ -38,7 +38,7 @@ Sources: [ASUSTOR — Using a NAS with Docker](https://www.asustor.com/solution/
 
 - **The NAS code directory has no `.git` at all** — only `data/` is version-controlled. The running
   code is literally not under version control.
-- **`deploy.sh` = `rsync` without `--delete`**, run from whichever machine the user is on. That means
+- **`./vpn deploy` = `rsync` without `--delete`** (formerly `deploy.sh`), run from whichever machine the user is on. That means
   (a) deleted files never leave the NAS (orphans accumulate), and (b) the "current" code is whatever
   was last synced from some machine — no single source of truth.
 - **Result:** the "Frankenstein NAS" — committed desktop code + uncommitted desktop code + a stray

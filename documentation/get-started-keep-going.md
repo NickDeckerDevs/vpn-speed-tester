@@ -11,11 +11,11 @@ Operational guide for the VPN speed tester stack. Covers first-time setup, enabl
 ### Step 1 — Deploy code and bring up the stack
 
 ```bash
-cd ~/repos/vpn-speed-tester
-./deploy.sh
+cd <repo root>   # .../NAS-vpn-speed-tester/vpn-speed-tester
+./vpn deploy
 ```
 
-**What happens:** `deploy.sh` validates that every `.env` variable is present and not a placeholder, then `rsync`s the whole repo to `/volume1/Docker/vpn-speed-tester/` on the NAS over SSH, tears down any existing containers, and automatically brings up the new stack with `docker compose up -d --build`. The entire deployment is fully automated — no manual SSH required.
+**What happens:** `./vpn deploy` validates that every `.env` variable is present and not a placeholder, then `rsync`s the whole repo to `/volume1/Docker/vpn-speed-tester/` on the NAS over SSH, tears down any existing containers, and automatically brings up the new stack with `docker compose up -d --build`. The entire deployment is fully automated — no manual SSH required. *(The old `deploy.sh` was folded into this `./vpn` CLI — see [project-files.md](project-files.md). Note: deploy is currently held pending the deployment upgrade — see [roadmap-working.md](roadmap-working.md).)*
 
 The script polls until old containers are confirmed gone, starts the new ones, waits for them to be healthy, then verifies they're running before exiting. Docker builds the image (`node:20-slim` + Python 3 + `speedtest-cli`) and starts three containers:
 
@@ -167,7 +167,7 @@ Required values:
 | `QBT_USERNAME` | qBittorrent WebUI username (default: `admin`) |
 | `QBT_PASSWORD` | qBittorrent WebUI password — Tools → Options → Web UI |
 | `QBT_BASE_URL` | LAN URL of qBittorrent WebUI (e.g. `http://10.1.10.254:8080`) |
-| `SYSOP_SSH` | NAS sudo password (used by deploy.sh for remote docker commands) |
+| `SYSOP_SSH` | NAS sudo password (used by `./vpn deploy` for remote docker commands) |
 
 > **Never commit `.env` to git.** It is already in `.gitignore`.
 
@@ -178,11 +178,11 @@ Required values:
 Run the deploy script from your Mac. It handles everything: validation, rsync, teardown, and bringing up the stack:
 
 ```bash
-cd ~/repos/vpn-speed-tester
-./deploy.sh
+cd <repo root>   # .../NAS-vpn-speed-tester/vpn-speed-tester
+./vpn deploy
 ```
 
-The script:
+The command:
 1. Validates that every `.env` variable is present and not a placeholder
 2. Rsyncs all code and config to `/volume1/Docker/vpn-speed-tester/` on the NAS
 3. Tears down any existing containers (docker compose down + docker rm -f)
@@ -193,7 +193,7 @@ The script:
 
 The first build takes ~30–60 seconds (installs Python, pip, and speedtest-cli).
 
-When `./deploy.sh` finishes successfully you'll see:
+When `./vpn deploy` finishes successfully you'll see:
 ```
 ✓ Deployment complete! Crons are active and ready to run.
 Stack is up:
@@ -268,12 +268,29 @@ Confirm `index.json` lists the snapshot file, and that report Tab 2 (Hourly Snap
 
 ```bash
 # On your Mac — validates .env, rsyncs, tears down, and brings back up (all automated)
-./deploy.sh
+./vpn deploy
 ```
 
-That's it! The deployment is fully automated. No manual SSH steps needed. You can now make code changes, run `./deploy.sh`, and have confidence that the crons will fire on schedule.
+That's it! The deployment is fully automated. No manual SSH steps needed. You can now make code changes, run `./vpn deploy`, and have confidence that the crons will fire on schedule.
 
 Alternatively, use Portainer → Stacks → `vpn-speed-tester` → **Pull and redeploy**.
+
+---
+
+## Desktop validation loop (Phase 2)
+
+Separate from the NAS stack: a continuous loop runs on the **desktop** (Colima/Docker) to grade the
+switch advisor against real speed tests and gather balanced data on the top-10 servers. Quickstart:
+
+```bash
+colima start --vm-type=vz --cpu 2 --memory 4 --disk 20     # one-time per boot
+docker compose -f docker-compose.desktop.yml up -d --build  # gluetun + runner + orchestrator(validationMain.js)
+docker logs -f orchestrator                                 # watch passes
+./vpn dashboard                                             # summarize accuracy / coverage / curves
+./vpn advise --current Meleph                               # one-off recommendation (no containers touched)
+```
+
+Full setup + management + record format: [desktop-validation-loop.md](desktop-validation-loop.md).
 
 ---
 

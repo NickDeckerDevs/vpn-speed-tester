@@ -122,6 +122,9 @@ All workflows go through the single `./vpn` CLI at the repo root (run from your 
 - `./vpn test` — trigger one manual speed-test window now (`docker exec orchestrator node main.js --manual`). `./vpn test --infinite` loops servers continuously.
 - `./vpn logs` / `./vpn servers` — tail today's log / list the gluetun-accepted server names.
 - `./vpn rebuild` — reconstruct `results.json` from raw data (`node rebuildResults.js`).
+- `./vpn fetch` — read-only pull of NAS data into `analysis/nas-data/` for offline analysis (`--with-logs` also pulls logs).
+- `./vpn advise [--current X]` — run the load-aware **switch advisor** once against live AirVPN status; prints a stay/switch recommendation (recommend-only, touches nothing). Runs locally; no `.env` needed.
+- `./vpn dashboard` — read-only summary of the desktop validation loop (decision accuracy, per-server prediction bias, coverage, live load→speed curves).
 
 A browser control panel over this CLI is available locally via `./vpn-ui` (serves `vpn-ui.html` on 127.0.0.1:9192).
 
@@ -130,7 +133,10 @@ Inside the orchestrator container (rarely needed directly — `docker exec orche
 - `npm run test:single` — `node main.js --manual`, runs one speed-test window immediately and exits.
 - `npm run test:infinite` — `node main.js --infinite`, loops servers continuously (resets coverage when all tiers are filled).
 
-There are **no unit tests and no linter** configured. `orchestrator/test-qbt-pause.js` is a one-off probe script, not a test suite.
+No linter is configured. The legacy NAS modules have no tests, but the Phase-2 advisor/validation
+modules do: plain `node:assert` files run directly (`node orchestrator/switchAdvisor.test.js`,
+`orchestrator/validationLoop.test.js`, `analysis/buildModel.test.js`, `analysis/validationReport.test.js`
+— ~75 tests). `orchestrator/test-qbt-pause.js` is a one-off probe script, not a test suite.
 
 ## Architecture
 
@@ -169,6 +175,14 @@ Also registered: `cron.schedule('30 * * * *', writeHourlySnapshot)` ([snapshotWr
 - `server-data.json` — AirVPN status snapshot at the moment each session began.
 - `snapshots/` — hourly AirVPN status dumps.
 - `logs/YYYY-MM-DD.log` — daily orchestrator logs ([logger.js](orchestrator/logger.js)).
+
+### Phase 2 — switch advisor + desktop validation loop (branch `feat/switch-advisor`)
+
+A load-aware **switch advisor** decides stay-vs-switch for the media-stack VPN, recommend-only:
+- [orchestrator/switchAdvisor.js](orchestrator/switchAdvisor.js) — pure `expectedBandwidth()` + `recommend()` (three zones: stay / check-for-better / must-jump; fail-safe to stay). Consumes the "cheat sheet" [analysis/server-model.json](analysis/server-model.json), built by [analysis/buildModel.js](analysis/buildModel.js) from `analysis/nas-data/`.
+- [orchestrator/adviseJob.js](orchestrator/adviseJob.js) — the `./vpn advise` runner (Node `fetch`; no config/.env dependency).
+
+A continuous **self-validation loop** grades the advisor against real speed tests, on a **Colima desktop runtime** (not the NAS): [docker-compose.desktop.yml](docker-compose.desktop.yml) runs an `orchestrator` container executing [orchestrator/validationMain.js](orchestrator/validationMain.js), which **reuses** `gluetunManager.switchServer`/`waitForTunnel` + `speedTester.runSpeedtest`. Pure loop logic + scoring + top-10 coverage rotation live in [orchestrator/validationLoop.js](orchestrator/validationLoop.js); [orchestrator/estTime.js](orchestrator/estTime.js) is the shared EST-timestamp helper (also used by scheduler.js). Each pass writes the decision log (`validation-log.jsonl`) **and** canonical `raw-results.json`/`server-data.json` into the desktop `/data`, so `buildModel.js` + the report can consume the desktop measurements. `./vpn dashboard` ([analysis/validationReport.js](analysis/validationReport.js)) summarizes it. Full design: [documentation/desktop-validation-loop.md](documentation/desktop-validation-loop.md). `config.js` `GLUETUN_CONTROL_URL`/`GLUETUN_SERVERS_URL`/container names are env-overridable for this local-vs-NAS reuse.
 
 ## Env vars (`.env`)
 

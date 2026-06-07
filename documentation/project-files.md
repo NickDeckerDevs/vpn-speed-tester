@@ -12,17 +12,27 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 | `.env` | Secrets (WireGuard keys, qBittorrent creds, SSH password) | **Excluded** | Never committed; loaded by docker-compose; rsync excludes it |
 | `.env.example` | Template for `.env` | Synced | Tracked in git; users copy and populate with real secrets |
 | `.gitignore` | Git excludes | Tracked | Excludes `.env`, `node_modules/`, `*.log`, `.results.tmp.*.json`, `.claude/` |
-| `docker-compose.yml` | Entire test stack definition | Synced | Three services: `gluetun-speedtest`, `speedtest-runner`, `orchestrator`, + `report-server` (nginx) |
+| `docker-compose.yml` | Entire test stack definition (NAS) | Synced | Four services: `gluetun-speedtest`, `speedtest-runner`, `orchestrator`, `report-server` (nginx) |
+| `docker-compose.desktop.yml` | **Desktop validation stack** *(Phase 2)* | Local only | gluetun + speedtest-runner + orchestrator running `validationMain.js` (Colima); see [desktop-validation-loop.md](desktop-validation-loop.md) |
 | `.claude/settings.local.json` | Claude Code editor config | Excluded | User-specific; not part of the deployed project |
 
-### Deployment & Operations Scripts
-| File | Role | How It's Used | Target |
-|---|---|---|---|
-| `deploy.sh` | Validate → rsync → teardown → **bring up stack** (fully automated) | Run locally: `./deploy.sh` | Syncs repo to NAS; tears down old containers; automatically starts new stack; verifies health |
-| `deploy.sh --check` | Show live container status | `./deploy.sh --check` | SSH into NAS and runs docker ps |
-| `view-report.sh` | Pull report HTML from NAS → open browser | `./view-report.sh` | Fetches latest HTML report back to local |
-| `view-data.sh` | Multi-command data viewer (summary/json/logs/servers) | `./view-data.sh [command]` | Reads data from NAS via SSH |
-| `export-summary.sh` | Generate plaintext speed report | `./export-summary.sh [output.txt]` | Reads results.json from NAS, formats as text |
+### Deployment & Operations — the `./vpn` CLI
+A single `./vpn` CLI at the repo root (sources `lib.sh`) is the entrypoint for all laptop-side
+workflows. The old `deploy.sh` / `view-report.sh` / `view-data.sh` / `export-summary.sh` scripts were
+consolidated into it (their pre-consolidation copies live in the frozen `analysis/nas-snapshot/`).
+
+| Command | Role |
+|---|---|
+| `./vpn deploy` (`--check`) | Validate `.env` → rsync → `down` → `up -d --build` (or just show NAS container status) |
+| `./vpn test` (`--infinite`) | One manual speed-test window (or loop servers continuously) |
+| `./vpn report` / `./vpn local` | Pull report HTML and open it / serve synced data on :9191 |
+| `./vpn logs` / `./vpn servers` | Tail today's log / list gluetun-accepted servers |
+| `./vpn rebuild` | Reconstruct `results.json` from `raw-results.json` + `server-data.json` |
+| `./vpn fetch` (`--with-logs`) | Read-only pull of NAS data into `analysis/nas-data/` |
+| `./vpn advise [--current X]` | Run the switch advisor live against AirVPN status (recommend-only) |
+| `./vpn dashboard` | Summarize the desktop validation loop |
+
+A browser control panel over the CLI: `./vpn-ui` (serves `vpn-ui.html` on 127.0.0.1:9192).
 
 ### Orchestrator — Core Application
 **Location:** `orchestrator/` (local) → `/app/` in Docker container → code loaded from Docker image  
@@ -43,9 +53,28 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 | `qbtClient.js` | qBittorrent pause/resume | `scheduler.js` | HTTP API calls to 10.1.10.254:8080; logs in, pauses, confirms, resumes |
 | `logger.js` | Structured logging | All modules | Writes to stdout + `/data/logs/YYYY-MM-DD.log`; `logger.fn()`, `.info()`, `.debug()`, `.warn()`, `.error()` |
 | `httpClient.js` | HTTP fetch wrapper | `airvpnStatus.js`, `qbtClient.js` | Timeout handling; error context |
+| `rebuildResults.js` | Recovery utility | `./vpn rebuild` | Rebuilds `results.json` from `raw-results.json` + `server-data.json` |
+| `estTime.js` | EST `YYYYMMDDHHMMSS` session-timestamp helper | `scheduler.js`, `validationMain.js` | Extracted so the NAS window + desktop loop mint session IDs identically |
+| **`switchAdvisor.js`** *(Phase 2)* | Load-aware stay/switch advisor | `adviseJob.js`, `validationLoop.js` | Pure `expectedBandwidth()` + `recommend()` (3 zones, fail-safe to stay) |
+| **`adviseJob.js`** *(Phase 2)* | `./vpn advise` runner | CLI | Fetches live AirVPN status, prints a recommendation; recommend-only |
+| **`validationLoop.js`** *(Phase 2)* | Pure validation logic | `validationMain.js` | `runValidationOnce` (DI'd), scoring, top-10 rotation, state; unit-tested |
+| **`validationMain.js`** *(Phase 2)* | Continuous validation loop (in-container) | `docker-compose.desktop.yml` | Reuses `gluetunManager`/`speedTester`; writes decision log + canonical data |
 | `Dockerfile` | Container image | Built by `docker-compose build` | `node:20-slim` + Python 3 + pip; installs `speedtest-cli`; copies orchestrator code |
 | `package.json` | npm dependencies | `npm install` in Dockerfile | axios, dockerode, fs-extra, haversine, node-cron, simple-git |
 | `package-lock.json` | Dependency lock (if present) | `npm ci` in Dockerfile | **Note:** orchestrator is the only place with a lock file; root-level lock files deleted |
+
+### Analysis tooling (Phase 2)
+**Location:** `analysis/` (local; reads `analysis/nas-data/` and the desktop loop's `/data`).
+
+| File | Role |
+|---|---|
+| `buildModel.js` (+ `.test.js`) | Builds the advisor "cheat sheet" `server-model.json` from collected data (per-server load→speed curve + cut-points) |
+| `server-model.json` | The generated cheat sheet consumed by `switchAdvisor.js` (checked in) |
+| `validationReport.js` (+ `.test.js`) | `./vpn dashboard` — summarizes the validation loop's output |
+| `nas-data/` | Read-only pull of NAS data (gitignored) |
+| `nas-snapshot/` | **Frozen, read-only** byte-copy of the NAS code as of 2026-06-05 (audit reference; git-tracked) |
+
+**Desktop runtime artifacts** (gitignored): `desktop-validation/data/{validation-log.jsonl, validation-state.json, raw-results.json, server-data.json}` + `desktop-validation/gluetun/`.
 
 ### Data Directory — Runtime Results & Reports
 **Location:** `data/` (local) → `/volume1/Docker/vpn-speed-tester/data/` on NAS  
@@ -65,7 +94,7 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 
 | File | Role | Updated By | Served From |
 |---|---|---|---|
-| `report/index.html` | Single-page report application | `deploy.sh` (rsync) | `/volume1/Docker/vpn-speed-tester/data/report/index.html` |
+| `report/index.html` | Single-page report application | `./vpn deploy` (rsync) | `/volume1/Docker/vpn-speed-tester/data/report/index.html` |
 
 **Report behavior:** fetches `../results.json` and `../snapshots/` at page load (no caching); renders tabs: Speed Test Results, Hourly Snapshots. Charts use Chart.js (CDN).
 
@@ -74,7 +103,7 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 |---|---|---|
 | `documentation/vpn-speed-tester-spec.md` | Designers/implementers | Complete system specification: goals, architecture, JSON schema, scheduling, orchestrator design, stack definition, report layout, git strategy, roadmap, decisions log |
 | `documentation/roadmap-working.md` | Project manager | Phase 1 status (complete), P0 next action, known issues fixed |
-| `documentation/get-started-keep-going.md` | Operators | How to: run deploy.sh, ssh into NAS, docker compose up, check logs, troubleshoot |
+| `documentation/get-started-keep-going.md` | Operators | How to: run `./vpn deploy`, ssh into NAS, docker compose up, check logs, troubleshoot, + the desktop validation loop |
 | `documentation/project-files.md` | Developers | This file; file inventory and roles |
 | `documentation/verified-completed-historical-only/` | Reference | Historical bug fixes and learnings (queue logic, qBittorrent auth, build report) |
 
@@ -89,7 +118,7 @@ This document maps every file in the vpn-speed-tester repository to its role, de
 
 ### 2. Deploy (Run Locally — Fully Automated)
 ```bash
-./deploy.sh
+./vpn deploy
 ```
 **Actions:**
 1. Validate 7 required `.env` vars
@@ -119,7 +148,7 @@ Containers start automatically:
 - Local `data/` contains only `results.json` (git-tracked)
 - NAS `/volume1/Docker/vpn-speed-tester/data/` contains the live data (git repo at `/data/`, results + snapshots tracked)
 - Report is in NAS data directory and served by nginx
-- To pull latest results locally: `view-data.sh json` or `export-summary.sh`
+- To pull latest results locally: `./vpn fetch` (data into `analysis/nas-data/`) or `./vpn report` (HTML)
 
 ---
 

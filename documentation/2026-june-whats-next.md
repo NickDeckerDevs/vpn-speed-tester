@@ -12,7 +12,20 @@ remains [roadmap-working.md](roadmap-working.md); this is the short, decision-or
 - **⚠️ Do not `./vpn deploy`** until the deployment upgrade lands — the rsync has no
   `--delete`/excludes and would re-push cruft onto the freshly-pruned NAS.
 
-## What we just did this session (2026-06-06)
+## 2026-06-07 — Phase 2 built (switch advisor + self-validation loop)
+
+Big session. Built the load-aware **switch advisor** (recommend-only) + a **continuous self-validation
+loop** on a Colima desktop runtime that grades the advisor against real speed tests. Highlights:
+- `orchestrator/switchAdvisor.js` + `analysis/server-model.json` (the "cheat sheet") → `./vpn advise`.
+- Validation loop runs in an orchestrator container (`docker-compose.desktop.yml` → `validationMain.js`),
+  reusing `gluetunManager`/`speedTester`; rotates through the top-10; writes canonical data + a
+  decision log. `./vpn dashboard` summarizes it. Full design: [desktop-validation-loop.md](desktop-validation-loop.md).
+- ~75 tests, branch `feat/switch-advisor` (not yet merged). Loop is gathering balanced data (~2-week horizon).
+
+**The live decision list now lives at the top of [roadmap-working.md](roadmap-working.md) ("Next
+decisions").** This handoff is the short mirror.
+
+## What we did earlier (2026-06-06)
 
 - **Fixed the Caddy crash-loop.** Root cause: all three Caddy env vars
   (`CLOUDFLARE_API_TOKEN` / `BASE_DOMAIN` / `ACME_EMAIL`) were missing from **Portainer's
@@ -62,6 +75,7 @@ entry IPs · container health watchdog · efficiency-ratio charting.
 
 ## Suggested next pick
 
-Either **(3) bring the data home** — low-risk, no live changes, and it's the payoff of Phase 1
-— or commit to **(1) the deployment upgrade** as a dedicated plan so `./vpn deploy` becomes safe
-again. (2) Remote access is the smallest quick win if you want Immich on cellular soon.
+See **"Next decisions"** at the top of [roadmap-working.md](roadmap-working.md) — that's the live menu.
+In short, the strongest candidates now are: **let the validation loop gather a few days then revisit the
+stay-zone policy**, **rebuild a desktop-calibrated model** (the NAS model is biased for this vantage), or
+commit to **the deployment upgrade** (independent, unblocks the NAS Part-3 campaign + production).
