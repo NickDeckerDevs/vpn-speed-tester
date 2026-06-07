@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { buildValidationRecord, nextCurrent, loadState, saveState, runValidationOnce } = require('./validationLoop');
+const { buildValidationRecord, nextCurrent, nextLoopState, loadState, saveState, runValidationOnce } = require('./validationLoop');
 
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log(`  ok  ${name}`); }
@@ -93,6 +93,31 @@ test('nextCurrent: a STAY keeps the current server', () => {
 });
 test('nextCurrent: first run with no current stays null', () => {
   assert.strictEqual(nextCurrent({ action: 'stay', from: null, to: null }), null);
+});
+
+// --- nextLoopState (coverage rotation) ------------------------------------
+const TOP = ['Leo', 'Aladfar', 'Meleph', 'Volans', 'Ascella', 'Scutum', 'Polis', 'Giausar', 'Helvetios', 'Chertan'];
+
+test('nextLoopState: a SWITCH follows the advisor and syncs the cursor', () => {
+  const s = nextLoopState({ action: 'switch', from: 'Leo', to: 'Volans' }, { current: 'Leo', staysOnCurrent: 1, cursorIndex: 0 }, TOP);
+  assert.deepStrictEqual(s, { current: 'Volans', staysOnCurrent: 0, cursorIndex: 3 });
+});
+test('nextLoopState: one STAY holds the current server and counts it', () => {
+  const s = nextLoopState({ action: 'stay', from: 'Volans' }, { current: 'Volans', staysOnCurrent: 0, cursorIndex: 3 }, TOP);
+  assert.deepStrictEqual(s, { current: 'Volans', staysOnCurrent: 1, cursorIndex: 3 });
+});
+test('nextLoopState: TWO stays in a row force-rotate to the next server in the list', () => {
+  const s = nextLoopState({ action: 'stay', from: 'Volans' }, { current: 'Volans', staysOnCurrent: 1, cursorIndex: 3 }, TOP);
+  assert.deepStrictEqual(s, { current: 'Ascella', staysOnCurrent: 0, cursorIndex: 4 }); // index 3 -> 4
+});
+test('nextLoopState: rotation wraps around at the end of the list', () => {
+  const s = nextLoopState({ action: 'stay', from: 'Chertan' }, { current: 'Chertan', staysOnCurrent: 1, cursorIndex: 9 }, TOP);
+  assert.deepStrictEqual(s, { current: 'Leo', staysOnCurrent: 0, cursorIndex: 0 }); // index 9 -> 0
+});
+test('nextLoopState: custom maxStays threshold is honored', () => {
+  // with maxStays=3, the 2nd stay still holds
+  const s = nextLoopState({ action: 'stay', from: 'Leo' }, { current: 'Leo', staysOnCurrent: 1, cursorIndex: 0 }, TOP, 3);
+  assert.deepStrictEqual(s, { current: 'Leo', staysOnCurrent: 2, cursorIndex: 0 });
 });
 
 // --- state persistence ----------------------------------------------------
@@ -224,6 +249,23 @@ function mock(speeds, { throwEvery = 0 } = {}) {
       assert.strictEqual(out.record.timing.current.switchMs, 5000);
       assert.deepStrictEqual(out.record.timing.current.runMs, [30000, 30000]);
       assert.strictEqual(out.record.timing.alternative.switchMs, 5000);
+    });
+  })();
+
+  await (async function () {
+    const m = mock({ Cur: 210, Alt: 305 });
+    const out = await runValidationOnce({
+      model: MODEL, currentServer: 'Cur', fetchStatus: async () => liveStatus({ Cur: 80, Alt: 20 }),
+      switchServer: m.switchServer, runSpeedtest: m.runSpeedtest, runsPerServer: 2,
+      now: () => 'T', sessionStamp: () => '20260607010101',
+    });
+    test('runValidationOnce: surfaces raw canonical capture (full results + live row + ts)', () => {
+      assert.strictEqual(out.raw.current.server, 'Cur');
+      assert.strictEqual(out.raw.current.ts, '20260607010101');
+      assert.strictEqual(out.raw.current.liveRow.public_name, 'Cur'); // the live AirVPN row
+      assert.strictEqual(out.raw.current.runs.length, 2);             // full speedtest objects
+      assert.strictEqual(typeof out.raw.current.runs[0].download, 'number');
+      assert.strictEqual(out.raw.alternative.server, 'Alt');
     });
   })();
 

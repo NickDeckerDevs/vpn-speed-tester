@@ -38,6 +38,7 @@ const { writeResults, loadResults } = require('./resultsWriter');
 const { writeHourlySnapshot } = require('./snapshotWriter');
 const { pauseAll, resumeAll } = require('./qbtClient');
 const { appendServerData, appendRawResult } = require('./rawDataWriter');
+const { getESTTimestamp } = require('./estTime');
 
 const SECONDS_BETWEEN_RUNS = 10;
 
@@ -114,21 +115,6 @@ async function writeUnreachableReport({ windowStart, liveServers, acceptedSet })
     logger.warn(`writeUnreachableReport: write failed (${err.message})`);
   }
   return { unreachable, accepted };
-}
-
-function getESTTimestamp() {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date());
-  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
-  return `${p.year}${p.month}${p.day}${p.hour}${p.minute}${p.second}`;
 }
 
 async function runSpeedTestWindow(opts = {}) {

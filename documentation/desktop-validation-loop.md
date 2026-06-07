@@ -34,7 +34,19 @@ and is unit-tested (`validationLoop.test.js`, mocked). The container just inject
   for `docker compose` to resolve.
 - **Model**: `analysis/server-model.json` is mounted read-only at `/config/server-model.json`.
 - **Output** (under the gitignored `desktop-validation/data/`, mounted at `/data`):
-  `validation-log.jsonl` (one record per pass) and `validation-state.json` (notional current server).
+  - `validation-log.jsonl` — one decision-scoring record per pass (predicted/measured/decision/timing)
+  - `validation-state.json` — `{ current, staysOnCurrent, cursorIndex }` (drives coverage rotation)
+  - `raw-results.json` + `server-data.json` — **canonical format** (same as the NAS report data), so
+    `buildModel.js` and `report/index.html` can consume the desktop measurements.
+  - `results.json` for the report is regenerated on demand:
+    `docker exec orchestrator node rebuildResults.js` (reads the canonical files in /data).
+
+## Coverage rotation
+
+The advisor drives switches normally. But to exercise all 10 (not park on one low-load favorite),
+after **2 consecutive STAYs** on the same server the loop force-steps to the **next** server in the
+top-10 order (looping). Cold start seeds index 0. So `current` walks the whole list over time —
+`validation-state.json` tracks where we are (`cursorIndex`).
 
 ## Run / manage
 
