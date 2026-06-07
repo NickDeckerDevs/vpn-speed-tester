@@ -1,0 +1,53 @@
+# docker-compose.desktop.yml — minimal speed-test stack for the DESKTOP validation
+# loop (Part 2). Just the tunnel + a runner; no orchestrator/report. The host-side
+# runner (orchestrator/validationRunner.js) drives switching via
+# `docker compose --force-recreate` and tests via `docker exec`, so there is no
+# in-container orchestrator and no docker.sock mount.
+#
+# Server is selected via SERVER_NAMES (passed in the runner's env on each switch).
+# Tunnel readiness is the gluetun healthcheck (ping 1.1.1.1) — no control API needed.
+#
+# WIREGUARD_* are interpolated from .env in this directory.
+#
+# Changelog
+# 2026-06-06  created — P2-4: desktop validation stack (gluetun + speedtest-runner)
+
+services:
+
+  gluetun-speedtest:
+    image: qmcgaw/gluetun:v3.41.1
+    container_name: gluetun-speedtest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=United States
+      - SERVER_NAMES=${SERVER_NAMES:-Aladfar}
+      - DNS_SERVERS=1.1.1.1,8.8.8.8
+      - DNS_IPV6=false
+      - TZ=America/New_York
+    volumes:
+      - ./desktop-validation/gluetun:/gluetun
+    healthcheck:
+      test: ping -c 1 -W 5 1.1.1.1 || exit 1
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  speedtest-runner:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: speedtest-runner
+    network_mode: "service:gluetun-speedtest"
+    entrypoint: []
+    command: sleep infinity
+    depends_on:
+      - gluetun-speedtest
