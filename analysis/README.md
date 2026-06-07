@@ -10,6 +10,10 @@ Local workspace for analyzing the speed-test data collected on the NAS. Pull the
 This pulls **read-only** into `nas-data/` (git-ignored — see [.gitignore](../.gitignore)). The live
 NAS stack is never modified. As of 2026-06-05 there are ~371 sessions and ~602 hourly snapshots.
 
+> ✅ **"Bring the data home" verified complete 2026-06-07.** Local `nas-data/` is intact —
+> 371 sessions, 604 snapshots, window 2026-05-08 → 2026-06-02. It's ~5 days stale; refresh
+> any time with `./vpn fetch`.
+
 ## What you get (file shapes)
 
 Cross-reference the "Data layout" section of [CLAUDE.md](../CLAUDE.md) for the source of truth.
