@@ -77,15 +77,17 @@ const GLUETUN_ACCEPTED_AIRVPN_SERVERS = [
 module.exports = {
   GLUETUN_ACCEPTED_AIRVPN_SERVERS,
   AIRVPN_STATUS_URL:    'https://airvpn.org/api/status',
-  GLUETUN_CONTROL_URL:  'http://gluetun-speedtest:8000/v1/vpn/status',
+  // Env-overridable so the desktop validation run can point at a different gluetun
+  // control endpoint than the NAS if ever needed (default works in-network on both).
+  GLUETUN_CONTROL_URL:  process.env.GLUETUN_CONTROL_URL || 'http://gluetun-speedtest:8000/v1/vpn/status',
   // Gluetun's bundled server list — used to pre-filter candidates to only
   // servers this gluetun binary will actually accept a connection to
-  GLUETUN_SERVERS_URL:  'http://gluetun-speedtest:8000/v1/servers/airvpn',
-  SPEEDTEST_CONTAINER:  'speedtest-runner',
+  GLUETUN_SERVERS_URL:  process.env.GLUETUN_SERVERS_URL || 'http://gluetun-speedtest:8000/v1/servers/airvpn',
+  SPEEDTEST_CONTAINER:  process.env.SPEEDTEST_CONTAINER || 'speedtest-runner',
   QBT_BASE_URL:         process.env.QBT_BASE_URL,
   QBT_USERNAME:         process.env.QBT_USERNAME || 'admin',
   QBT_PASSWORD:         process.env.QBT_PASSWORD,
-  GLUETUN_CONTAINER:    'gluetun-speedtest',
+  GLUETUN_CONTAINER:    process.env.GLUETUN_CONTAINER || 'gluetun-speedtest',
   RESULTS_PATH:         '/data/results.json',
   SNAPSHOTS_PATH:       '/data/snapshots/',
   GIT_REPO_PATH:        '/data/',

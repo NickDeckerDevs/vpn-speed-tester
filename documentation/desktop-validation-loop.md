@@ -1,78 +1,60 @@
 # Desktop validation loop (Part 2)
 
-Self-scoring loop for the switch advisor. Every hour it asks the advisor for a
-stay/switch decision, then **actually speed-tests** the current server and the best
-alternative through the VPN, and logs predicted-vs-measured + whether the decision
-was right. Runs on the **desktop** (not the NAS, not in the live media stack).
+Self-scoring loop for the switch advisor. **Continuously** (back-to-back, ~2 min/pass) it asks the
+advisor for a stay/switch decision, then **actually speed-tests** the current server and the best
+alternative through the VPN, and logs predicted-vs-measured + whether the decision was right. Runs on
+the **desktop** (not the NAS, not the live media stack).
 
-This is for validating the model — it never touches production.
+This validates the model — it never touches production.
 
-## Architecture
+## Architecture — runs the orchestrator the same way the NAS does
 
 ```
- cron (LaunchAgent, hourly :15)
-   └─ desktop-validation/run-validation.sh   (sets PATH, ensures colima/stack up)
-        └─ node orchestrator/validationRunner.js   (HOST side)
-             ├─ fetch AirVPN status  (public API)
-             ├─ recommend()          (orchestrator/switchAdvisor.js + analysis/server-model.json)
-             ├─ switchServer(name)   → docker compose -f docker-compose.desktop.yml
-             │                          up -d --force-recreate gluetun + runner; wait healthy
-             ├─ runSpeedtest()       → docker exec speedtest-runner speedtest-cli --json --secure
-             ├─ append record        → analysis/validation-log.jsonl
-             └─ carry current fwd    → analysis/validation-state.json
+ docker compose -f docker-compose.desktop.yml   (Colima/Docker)
+   ├─ gluetun-speedtest     WireGuard tunnel (SERVER_NAMES selects the server)
+   ├─ speedtest-runner      shares gluetun's netns; speedtest-cli
+   └─ orchestrator          command: node validationMain.js   (continuous loop)
+        docker.sock mounted; reuses the PROVEN machinery:
+        ├─ gluetunManager.switchServer / waitForTunnel   (tearDown → recreate → control-API health)
+        ├─ speedTester.runSpeedtest                       (exec speedtest-cli in the runner)
+        ├─ airvpnStatus.fetchUSServers                    (live busy-levels)
+        └─ switchAdvisor.recommend (via runValidationOnce)
 ```
 
-The pure logic (`runValidationOnce`, scoring, state) lives in
-`orchestrator/validationLoop.js` and is unit-tested (`validationLoop.test.js`,
-mocked Docker). The runner just supplies the real docker-backed collaborators.
+`validationMain.js` captures the base container config, then loops forever:
+fetch → recommend → speed-test current + best-alt → append a record → carry current forward.
+The pure scoring (`runValidationOnce`, scoring, state, timing) lives in `orchestrator/validationLoop.js`
+and is unit-tested (`validationLoop.test.js`, mocked). The container just injects the real collaborators.
 
 ## Runtime
 
-- **Container runtime: Colima** (`brew install colima docker docker-compose`),
-  Apple `vz` backend. Start: `colima start --vm-type=vz --cpu 2 --memory 4 --disk 20`.
-  `~/.docker/config.json` has `cliPluginsExtraDirs: ["/opt/homebrew/lib/docker/cli-plugins"]`
-  so `docker compose` resolves.
-- **Stack: `docker-compose.desktop.yml`** — gluetun-speedtest + speedtest-runner only.
-  WIREGUARD_* come from `.env`. Bring up: `docker compose -f docker-compose.desktop.yml up -d`.
+- **Container runtime: Colima** (`brew install colima docker docker-compose`), Apple `vz` backend.
+  Start: `colima start --vm-type=vz --cpu 2 --memory 4 --disk 20`.
+  `~/.docker/config.json` needs `cliPluginsExtraDirs: ["/opt/homebrew/lib/docker/cli-plugins"]`
+  for `docker compose` to resolve.
+- **Model**: `analysis/server-model.json` is mounted read-only at `/config/server-model.json`.
+- **Output** (under the gitignored `desktop-validation/data/`, mounted at `/data`):
+  `validation-log.jsonl` (one record per pass) and `validation-state.json` (notional current server).
 
-## Run it manually
-
-```sh
-node orchestrator/validationRunner.js                 # one pass (uses saved current)
-node orchestrator/validationRunner.js --current Volans # force the starting server
-```
-
-## The schedule (LaunchAgent)
-
-`~/Library/LaunchAgents/com.nickdecker.vpn-validation.plist` → runs
-`desktop-validation/run-validation.sh` at **HH:15 every hour** (offset from the top
-of the hour, where a future NAS campaign would sit — see staggering below).
+## Run / manage
 
 ```sh
-# load / unload
-launchctl bootstrap   gui/$(id -u) ~/Library/LaunchAgents/com.nickdecker.vpn-validation.plist
-launchctl bootout     gui/$(id -u)/com.nickdecker.vpn-validation
-# run now (don't wait for the hour) / inspect
-launchctl kickstart   gui/$(id -u)/com.nickdecker.vpn-validation
-launchctl print       gui/$(id -u)/com.nickdecker.vpn-validation
-# console log of scheduled runs
-tail -f desktop-validation/validation-run.log
+docker compose -f docker-compose.desktop.yml up -d --build   # start (continuous; restart: unless-stopped)
+docker logs -f orchestrator                                   # watch passes live
+tail -f desktop-validation/data/validation-log.jsonl          # the records
+docker compose -f docker-compose.desktop.yml down            # stop everything
 ```
 
-The wrapper self-heals: if `docker info` fails (e.g. after reboot) it runs
-`colima start` first. For Colima to survive reboot without that wait, optionally:
-`brew services start colima`.
+Tunables (compose `orchestrator.environment`): `VALIDATION_RUNS_PER_SERVER` (default 2),
+`VALIDATION_GAP_MS` (default 5000). The gluetun control endpoint is `GLUETUN_CONTROL_URL`
+(default `http://gluetun-speedtest:8000/v1/vpn/status`) — env-overridable for local vs NAS.
 
-## Staggering vs the NAS campaign (Part 3)
-
-A VPN speed test saturates the home WAN, so the desktop loop and the NAS top-10
-campaign must **never** speed-test at the same time. The desktop loop runs at
-**:15**; schedule the NAS campaign off that window (e.g. top of the hour). Each
-pass is ~5 min (2 tunnel switches + 4 speedtests).
+After a reboot, ensure Colima is up (`colima start`, or `brew services start colima`); the
+`restart: unless-stopped` orchestrator resumes on its own once Docker is back.
 
 ## Reading the results
 
-`analysis/validation-log.jsonl` — one JSON record per pass:
+`desktop-validation/data/validation-log.jsonl` — one JSON record per pass:
 
 ```jsonc
 {
@@ -84,10 +66,20 @@ pass is ~5 min (2 tunnel switches + 4 speedtests).
     "altPredictionError": 35,
     "measuredGap": 160,             // + => alternative really was faster
     "decisionCorrect": true         // switch: alt faster ; stay: didn't miss a faster one
-  }
+  },
+  "timing": { "durationMs": 117000, "current": {...}, "alternative": {...} }  // total + per-server switch/run ms
 }
 ```
 
-Over time: `decisionCorrect` rate = how often the advisor was right; the prediction
-errors = how accurate the cheat sheet's expected speeds are. Both feed back into
-tuning `analysis/server-model.json` (rebuild via `node analysis/buildModel.js`).
+(First record after a fresh start is a cold-start `unknown-current`: no saved "current" server yet, so
+only the alternative is measured. It self-corrects from the next pass.)
+
+Over time: `decisionCorrect` rate = how often the advisor was right; prediction errors = how accurate
+the cheat sheet is. Both feed tuning of `analysis/server-model.json` (rebuild via `node analysis/buildModel.js`).
+
+## Staggering vs the NAS campaign (Part 3)
+
+A VPN speed test saturates the home WAN, so the desktop loop and the NAS top-10 campaign must **never**
+speed-test at the same time. Since the desktop loop now runs continuously, when the NAS campaign starts
+we'll coordinate (e.g. pause the desktop loop during NAS windows, or alternate). Not an issue until
+Part 3 runs.

@@ -1,16 +1,16 @@
-# docker-compose.desktop.yml — minimal speed-test stack for the DESKTOP validation
-# loop (Part 2). Just the tunnel + a runner; no orchestrator/report. The host-side
-# runner (orchestrator/validationRunner.js) drives switching via
-# `docker compose --force-recreate` and tests via `docker exec`, so there is no
-# in-container orchestrator and no docker.sock mount.
+# docker-compose.desktop.yml — desktop CONTINUOUS validation stack (Part 2, revised).
 #
-# Server is selected via SERVER_NAMES (passed in the runner's env on each switch).
-# Tunnel readiness is the gluetun healthcheck (ping 1.1.1.1) — no control API needed.
+# Mirrors the NAS architecture so it reuses the proven machinery: an orchestrator
+# container (docker.sock mounted, on the same network as gluetun) runs
+# validationMain.js, which uses gluetunManager.switchServer / waitForTunnel /
+# speedTester.runSpeedtest to switch + measure. It never touches the live media stack.
 #
-# WIREGUARD_* are interpolated from .env in this directory.
+# WIREGUARD_* + QBT_* come from .env. The advisor model is mounted read-only.
 #
 # Changelog
-# 2026-06-06  created — P2-4: desktop validation stack (gluetun + speedtest-runner)
+# 2026-06-06  created — minimal gluetun + runner (host-driven)
+# 2026-06-06  rewrite — add orchestrator service running continuous validationMain.js;
+#               reuse gluetunManager instead of host docker-compose shell-outs
 
 services:
 
@@ -49,5 +49,28 @@ services:
     network_mode: "service:gluetun-speedtest"
     entrypoint: []
     command: sleep infinity
+    # A /data bind so gluetunManager's captureBaseConfig sees non-null base binds
+    # (otherwise switchServer falls back to the NAS path on recreate).
+    volumes:
+      - ./desktop-validation/runner-data:/data
     depends_on:
       - gluetun-speedtest
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    command: node validationMain.js
+    env_file: .env
+    environment:
+      - TZ=America/New_York
+      - VALIDATION_RUNS_PER_SERVER=2
+    volumes:
+      - ./desktop-validation/data:/data
+      - ./analysis/server-model.json:/config/server-model.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - gluetun-speedtest
+      - speedtest-runner
+    restart: unless-stopped

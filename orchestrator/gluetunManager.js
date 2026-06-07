@@ -190,6 +190,10 @@ async function captureBaseConfig() {
   } catch (err) {
     logger.warn(`captureBaseConfig: speedtest inspect failed — ${err.message}`);
   }
+  // Returns whether the gluetun base was captured — callers (e.g. the desktop
+  // validation loop) retry until true before the first switchServer(), which
+  // tears down before it checks for the base.
+  return !!_baseGluetunInfo;
 }
 
 async function switchServer(serverName) {
