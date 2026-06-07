@@ -126,14 +126,35 @@ async function resumeAll() {
   logger.fn(__filename, 'resumeAll', null);
   logger.info('resumeAll: sending resume command to qBittorrent...');
 
-  await login();
-
-  await httpClient.post(
-    `${config.QBT_BASE_URL}/api/v2/torrents/start`,
-    'hashes=all',
-    { ...qbtHeaders(), timeout: 30000 },
-    'qBittorrent resume'
-  );
+  // qBittorrent may have just been recreated (media-stack VPN switch): its WebUI can
+  // take several seconds to start accepting connections, and the prior SID is invalid
+  // against the new process. Re-authenticate from scratch and retry the start command
+  // through that not-ready window instead of failing the whole switch on a transient
+  // ECONNRESET. (In the nightly path qBittorrent is never recreated, so this succeeds
+  // on the first attempt.)
+  const deadline = Date.now() + 60000;
+  let attempt = 0;
+  for (;;) {
+    attempt++;
+    try {
+      sid = null;
+      loginAttempted = false;
+      await login();
+      await httpClient.post(
+        `${config.QBT_BASE_URL}/api/v2/torrents/start`,
+        'hashes=all',
+        { ...qbtHeaders(), timeout: 30000 },
+        'qBittorrent resume'
+      );
+      break;
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        throw new Error(`qBittorrent resume failed after ${attempt} attempt(s) over 60s — ${err.message}`);
+      }
+      logger.warn(`resumeAll: qBittorrent not ready (attempt ${attempt}: ${err.message}) — retrying in 3s...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
 
   if (downloadingHashesBeforePause) {
     logger.info(`resumeAll: force-starting ${downloadingHashesBeforePause.split('|').length} previously-downloading torrent(s)...`);
