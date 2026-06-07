@@ -124,18 +124,31 @@ test('nextLoopState: custom maxStays threshold is honored', () => {
 const tmp = path.join(os.tmpdir(), 'vpn-advisor-state.test.json');
 function cleanup() { try { fs.unlinkSync(tmp); } catch {} }
 
-test('loadState: missing file returns a clean null state', () => {
+test('loadState: missing file returns clean defaults (incl rotation fields)', () => {
   cleanup();
-  assert.deepStrictEqual(loadState(tmp), { current: null, updatedAt: null });
+  assert.deepStrictEqual(loadState(tmp), { current: null, staysOnCurrent: 0, cursorIndex: 0, updatedAt: null });
 });
-test('loadState: corrupt file degrades to null state (never throws)', () => {
+test('loadState: corrupt file degrades to clean defaults (never throws)', () => {
   fs.writeFileSync(tmp, 'not json{');
-  assert.deepStrictEqual(loadState(tmp), { current: null, updatedAt: null });
+  assert.deepStrictEqual(loadState(tmp), { current: null, staysOnCurrent: 0, cursorIndex: 0, updatedAt: null });
   cleanup();
 });
-test('saveState then loadState round-trips the current server', () => {
-  saveState(tmp, { current: 'Volans', updatedAt: '2026-06-06T00:00:00Z' });
-  assert.deepStrictEqual(loadState(tmp), { current: 'Volans', updatedAt: '2026-06-06T00:00:00Z' });
+test('saveState then loadState round-trips the FULL rotation state', () => {
+  // Regression: loadState used to drop staysOnCurrent/cursorIndex, so rotation never fired.
+  saveState(tmp, { current: 'Volans', staysOnCurrent: 1, cursorIndex: 3, updatedAt: '2026-06-06T00:00:00Z' });
+  assert.deepStrictEqual(loadState(tmp), { current: 'Volans', staysOnCurrent: 1, cursorIndex: 3, updatedAt: '2026-06-06T00:00:00Z' });
+  cleanup();
+});
+test('integration: persisted state -> nextLoopState rotates on the 2nd stay (the overnight bug)', () => {
+  const TOP2 = ['Leo', 'Aladfar', 'Meleph', 'Volans', 'Ascella'];
+  // pass 1: stay on Volans (staysOnCurrent 0 -> 1), persist, reload
+  saveState(tmp, { ...nextLoopState({ action: 'stay', from: 'Volans' }, { current: 'Volans', staysOnCurrent: 0, cursorIndex: 3 }, TOP2) });
+  let s = loadState(tmp);
+  assert.strictEqual(s.staysOnCurrent, 1); // survived the round-trip (the bug reset this to 0)
+  // pass 2: stay again -> must rotate to next index
+  s = nextLoopState({ action: 'stay', from: s.current }, s, TOP2);
+  assert.strictEqual(s.current, 'Ascella');
+  assert.strictEqual(s.cursorIndex, 4);
   cleanup();
 });
 

@@ -136,13 +136,22 @@ function nextLoopState(decision, prev = {}, candidateServers = [], maxStays = 2)
   return { current: decision.from, staysOnCurrent: stays, cursorIndex: ci >= 0 ? ci : fallbackIdx };
 }
 
-/** Load the loop's persisted state. Missing/corrupt file -> a clean { current: null }. */
+/**
+ * Load the loop's persisted state. Missing/corrupt file -> clean defaults.
+ * MUST pass through the rotation fields (staysOnCurrent, cursorIndex) — dropping
+ * them resets the stay counter every pass, so rotation never triggers.
+ */
 function loadState(statePath) {
   try {
     const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    return { current: s.current ?? null, updatedAt: s.updatedAt ?? null };
+    return {
+      current: s.current ?? null,
+      staysOnCurrent: s.staysOnCurrent ?? 0,
+      cursorIndex: Number.isInteger(s.cursorIndex) ? s.cursorIndex : 0,
+      updatedAt: s.updatedAt ?? null,
+    };
   } catch {
-    return { current: null, updatedAt: null };
+    return { current: null, staysOnCurrent: 0, cursorIndex: 0, updatedAt: null };
   }
 }
 
