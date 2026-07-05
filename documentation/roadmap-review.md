@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED 2026-07-05** — test phase closed; the NAS is now managed by the `NickDeckerDevs/homelab` monorepo. See `RETIRED.md`.
+
 # Roadmap Refresh & Next-Chapter Plan
 
 > **This is a planning document only.** Nothing here has been executed — no commits, no stashing,

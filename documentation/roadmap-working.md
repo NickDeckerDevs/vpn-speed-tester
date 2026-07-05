@@ -1,14 +1,19 @@
 # Roadmap — Working Document
 
 **Project:** AirVPN Speed Tester
-**Last Updated:** 2026-06-07
-**Status:** Phase 1 ✅ complete (data collected) · Phase 2 🔵 in progress (advisor ✅ + self-validation loop 🔵 + auto-switch "hands" ✅ on desktop)
+**Last Updated:** 2026-07-05
+**Status:** ✅ **RETIRED from the NAS 2026-07-05** — test phase closed, data archived (see [../RETIRED.md](../RETIRED.md)). The NAS is now managed by the **`NickDeckerDevs/homelab`** monorepo (five git-backed Portainer stacks). This repo remains the code source for the advisor/auto-switch orchestrator.
 
-This is a living document. **Next decisions are at the top.** Update it when priorities shift.
+> **2026-07-05 resolution of the list below:** #3 deployment upgrade — resolved by homelab's
+> git-backed Portainer stacks (this repo no longer deploys anywhere). #4 NAS campaign — dropped
+> (collection over). #5 remaining items — (b) arr-off-VPN cleanup shipped in homelab's
+> `stacks/media-download`; (a) guardrails + integration = homelab restructure plan Phase 7.
+> #6 — `feat/switch-advisor` was already merged to master (doc was stale). #1/#2 (model/policy
+> tuning) move with the Phase-7 integration work.
 
 ---
 
-## 🔵 Next decisions — what's awaiting a call
+## 🔵 Next decisions — what's awaiting a call *(historical as of 2026-07-05 — see note above)*
 
 Pick one of these to take into its own plan. Each notes what it's waiting on.
 

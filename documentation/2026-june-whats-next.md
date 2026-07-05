@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED 2026-07-05** — test phase closed; the NAS is now managed by the `NickDeckerDevs/homelab` monorepo. See `RETIRED.md` and homelab `docs/2026-07-05-restructure.md`.
+
 # What's next — June 2026 handoff
 
 A snapshot of the open options so the next session can pick up cleanly. Source of truth
